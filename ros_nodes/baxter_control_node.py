@@ -38,8 +38,11 @@ import time
 from autolab_core import RigidTransform
 from autolab_core import YamlConfig
 from dexnet.grasping import RobotGripper
-from yumipy import YuMiRobot, YuMiCommException, YuMiControlException, YuMiSubscriber
-from yumipy import YuMiConstants as YMC
+# from yumipy import YuMiRobot, YuMiCommException, YuMiControlException, YuMiSubscriber
+# from yumipy import YuMiConstants as YMC
+from baxter_interface import Limb
+from baxter_interface import Gripper
+
 from visualization import Visualizer2D as vis
 import perception as perception
 from perception import RgbdDetectorFactory, RgbdSensorFactory
@@ -53,9 +56,31 @@ from cv_bridge import CvBridge, CvBridgeError
 
 from gqcnn import GraspIsolatedObjectExperimentLogger
 
-def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, subscriber, home_pose, config):
+
+def close_gripper(gripper):
+    """closes the gripper"""
+    gripper.close(block=True)
+    rospy.sleep(1.0)
+
+def open_gripper(gripper):
+    """opens the gripper"""
+    gripper.open(block=True)
+    rospy.sleep(1.0)
+
+def go_to_pose(arm, pose):
+    """Uses Moveit to go to the pose specified
+    Parameters
+    ----------
+    pose : :obj:`geometry_msgs.msg.Pose`
+        The pose to move to
+    """
+    arm.set_start_state_to_current_state()
+    arm.set_pose_target(pose)
+    arm.plan()
+    arm.go()
+
+def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gripper, home_pose, config):
     """ Processes a ROS GQCNNGrasp message and executes the resulting grasp on the ABB Yumi """
-    
     grasp = grasp.grasp
     rospy.loginfo('Processing Grasp')
 
@@ -67,21 +92,22 @@ def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, subscriber, home_pose,
     
     if not config['robot_off']:
         rospy.loginfo('Executing Grasp!')
-        lifted_object, lift_gripper_width, lift_torque = execute_grasp(T_gripper_world, robot, left_arm, right_arm, subscriber, config)
+        lifted_object, lift_gripper_width, lift_torque = execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, subscriber, config)
     
         # bring arm back to home pose 
-        left_arm.goto_pose(home_pose)
-        right_arm.open_gripper(wait_for_res=True)
+        go_to_pose(left_arm, home_pose)
+        open_gripper(left_gripper)
 
         return lift_gripper_width, T_gripper_world
 
-def execute_grasp(T_gripper_world, robot, left_arm, right_arm, subscriber, config):
+def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, subscriber, config):
     """ Executes a single grasp for the hand pose T_gripper_world up to the point of lifting the object """
     # snap gripper to valid depth
     if T_gripper_world.translation[2] < config['grasping']['min_gripper_depth']:
         T_gripper_world.translation[2] = config['grasping']['min_gripper_depth']
 
     # get cur pose
+
     T_cur_world = left_arm.get_pose()
 
     # compute approach pose
@@ -137,13 +163,15 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, subscriber, confi
         left_arm.goto_pose(T_gripper_world, wait_for_res=True)
     
     # pick up object
+    
     right_arm.close_gripper(force=config['control']['gripper_close_force'], wait_for_res=True)
     pickup_gripper_width = right_arm.get_gripper_width()
     robot.set_v(config['control']['standard_velocity'])
     robot.set_z(config['control']['standard_zoning'])
-    left_arm.goto_pose(T_lift_world)
-    left_arm.goto_pose(YMC.L_KINEMATIC_AVOIDANCE_POSE, wait_for_res=True)
-    left_arm.goto_pose(YMC.L_PREGRASP_POSE, wait_for_res=True)
+
+    go_to_pose(left_arm, T_lift_world)
+    go_to_pose(left_arm, YMC.L_KINEMATIC_AVOIDANCE_POSE)
+    go_to_pose(left_arm, YMC.L_PREGRASP_POSE)
 
     # shake test
     if config['control']['shake_test']:
@@ -190,36 +218,42 @@ def init_robot(config):
     initialized = False
     while not initialized:
         try:
-            robot = YuMiRobot(debug=config['robot_off'])
-            robot.set_v(config['control']['standard_velocity'])
-            robot.set_z(config['control']['standard_zoning'])
-            left_arm = robot.left
-            left_arm.goto_state(YMC.L_HOME_STATE)
+            moveit_commander.roscpp_initialize(sys.argv)
+            rospy.init_node('moveit_node')
+            robot = moveit_commander.RobotCommander()
+
+            left_arm = moveit_commander.MoveGroupCommander('left_arm')
+            go_to_pose(left_arm, YMC.L_HOME_STATE)
             home_pose = YMC.L_PREGRASP_POSE
 
-            right_arm = robot.right
-            right_arm.goto_state(YMC.R_HOME_STATE)
+            right_arm = moveit_commander.MoveGroupCommander('right_arm')
+            go_to_pose(right_arm, YMC.R_HOME_STATE)
 
-            subscriber = YuMiSubscriber()
-            subscriber.start()
+            left_gripper = Gripper('left')
+            open_gripper(left_gripper)
+
+            right_gripper = Gripper('right')
+            open_gripper(right_gripper)
+
+            subscriber = Limb('left')
 
             initialized = True
-        except YuMiCommException as ymc:
-            if robot is not None:
-                robot.stop()
-            if subscriber is not None and subscriber._started:
-                subscriber.stop()
-            logging.error(str(ymc))
-            logging.error('Failed to initialize YuMi. Check the FlexPendant and connection to the YuMi.')
-            human_input = raw_input('Hit [ENTER] when YuMi is ready')
-    return robot, subscriber, left_arm, right_arm, home_pose
+    #     except YuMiCommException as ymc:
+    #         if robot is not None:
+    #             robot.stop()
+    #         if subscriber is not None and subscriber._started:
+    #             subscriber.stop()
+    #         logging.error(str(ymc))
+    #         logging.error('Failed to initialize YuMi. Check the FlexPendant and connection to the YuMi.')
+    #         human_input = raw_input('Hit [ENTER] when YuMi is ready')
+    return robot, subscriber, left_arm, right_arm, left_gripper, right_gripper, home_pose
 
 def run_experiment():
     """ Run the experiment """
 
     if not config['robot_off']:
         rospy.loginfo('Initializing YuMi')
-        robot, subscriber, left_arm, right_arm, home_pose = init_robot(config)
+        robot, subscriber, left_arm, right_arm, left_gripper, right_gripper, home_pose = init_robot(config)
     
     # create ROS CVBridge
     cv_bridge = CvBridge()
@@ -232,39 +266,39 @@ def run_experiment():
     camera_intrinsics = sensor.ir_intrinsics
 
     # setup experiment logger
-    experiment_logger = GraspIsolatedObjectExperimentLogger(config['experiment_dir'],
-                                                            config['supervisor'],
-                                                            camera_intrinsics,
-                                                            T_camera_world,
-                                                            '/home/autolab/Workspace/vishal_working/catkin_ws/src/gqcnn/cfg/ros_nodes/yumi_control_node.yaml',
-                                                            planner_type=config['planner_type'])
+    # experiment_logger = GraspIsolatedObjectExperimentLogger(config['experiment_dir'],
+    #                                                         config['supervisor'],
+    #                                                         camera_intrinsics,
+    #                                                         T_camera_world,
+    #                                                         '/home/autolab/Workspace/vishal_working/catkin_ws/src/gqcnn/cfg/ros_nodes/yumi_control_node.yaml',
+    #                                                         planner_type=config['planner_type'])
 
-    logging.info('Saving experiment to %s' %(experiment_logger.experiment_path))
+    # logging.info('Saving experiment to %s' %(experiment_logger.experiment_path))
     object_keys = config['test_object_keys']
-    trial_number = 1
-    re_try = False
+    # trial_number = 1
+    # re_try = False
 
-    logging.info('Beginning experiment')
+    # logging.info('Beginning experiment')
 
     while True:
-        if not re_try:
-            experiment_logger.start_trial()
-            obj = np.random.choice(object_keys, size=1)[0]
-        else:
-            re_try = False
+        # if not re_try:
+        #     experiment_logger.start_trial()
+        #     obj = np.random.choice(object_keys, size=1)[0]
+        # else:
+        #     re_try = False
         
         rospy.loginfo('Please place object: ' + obj + ' on the workspace.')
         raw_input("Press ENTER when ready ...")
         # start the next trial
-        rospy.loginfo('Trial %d' % (trial_number))
+        # rospy.loginfo('Trial %d' % (trial_number))
 
         # get the images from the sensor
         color_image, depth_image, _ = sensor.frames()
         
         # log some trial info        
-        experiment_logger.update_trial_attribute('trial_num', trial_number)
-        experiment_logger.update_trial_attribute('color_im', color_image)
-        experiment_logger.update_trial_attribute('depth_im', depth_image)
+        # experiment_logger.update_trial_attribute('trial_num', trial_number)
+        # experiment_logger.update_trial_attribute('color_im', color_image)
+        # experiment_logger.update_trial_attribute('depth_im', depth_image)
 
         # inpaint to remove holes
         inpainted_color_image = color_image.inpaint(rescale_factor=config['inpaint_rescale_factor'])
@@ -296,42 +330,43 @@ def run_experiment():
             lift_gripper_width, T_gripper_world = process_GQCNNGrasp(planned_grasp_data, robot, left_arm, right_arm, subscriber, home_pose, config)
 
             # get human label
-            human_input = raw_input('Grasp success, or grasp failure? [s/f] ')
-            while human_input.lower() != 's' and human_input.lower() != 'f':
-                logging.info('Did not understand input. Please answer \'s\' or \'f\'')
-                human_input = raw_input('Grasp success, or grasp failure? [s/f] ')
-            if human_input.lower() == 's':
-                experiment_logger.update_trial_attribute('human_label', 1)
-            else:
-                experiment_logger.update_trial_attribute('human_label', 0)
+            # human_input = raw_input('Grasp success, or grasp failure? [s/f] ')
+            # while human_input.lower() != 's' and human_input.lower() != 'f':
+            #     logging.info('Did not understand input. Please answer \'s\' or \'f\'')
+            #     human_input = raw_input('Grasp success, or grasp failure? [s/f] ')
+            # if human_input.lower() == 's':
+            #     experiment_logger.update_trial_attribute('human_label', 1)
+            # else:
+            #     experiment_logger.update_trial_attribute('human_label', 0)
             
             # log result
-            experiment_logger.update_trial_attribute('gripper_pose', T_gripper_world)
-            experiment_logger.update_trial_attribute('planning_time', grasp_plan_time)
-            experiment_logger.update_trial_attribute('gripper_width', lift_gripper_width)
-            experiment_logger.update_trial_attribute('found_grasp', 1)
-            experiment_logger.update_trial_attribute('completed', True)
-            experiment_logger.update_trial_attribute('object_key', obj)
-            trial_number += 1
+            # experiment_logger.update_trial_attribute('gripper_pose', T_gripper_world)
+            # experiment_logger.update_trial_attribute('planning_time', grasp_plan_time)
+            # experiment_logger.update_trial_attribute('gripper_width', lift_gripper_width)
+            # experiment_logger.update_trial_attribute('found_grasp', 1)
+            # experiment_logger.update_trial_attribute('completed', True)
+            # experiment_logger.update_trial_attribute('object_key', obj)
+            # trial_number += 1
 
         except rospy.ServiceException as e:
-            rospy.logerr("Service call failed: \n %s" % e)  
-            experiment_logger.update_trial_attribute('found_grasp', 0)
-            experiment_logger.update_trial_attribute('completed', True)
+            print e
+        #     rospy.logerr("Service call failed: \n %s" % e)  
+        #     experiment_logger.update_trial_attribute('found_grasp', 0)
+        #     experiment_logger.update_trial_attribute('completed', True)
 
-            experiment_logger.update_trial_attribute('object_key', obj)     
-            trial_number += 1
-        except (YuMiCommException, YuMiControlException) as yce:
-            rospy.logerr(str(yce))
-            if sensor is not None:
-                sensor.stop()
-            if robot is not None:
-                robot.stop()
-            if subscriber is not None and subscriber._started:
-                subscriber.stop()        
-            rospy.loginfo("Re-trying")
-            re_try = True
-            robot, subscriber, left_arm, right_arm, home_pose = init_robot(config)
+        #     experiment_logger.update_trial_attribute('object_key', obj)     
+        #     trial_number += 1
+        # except (YuMiCommException, YuMiControlException) as yce:
+        #     rospy.logerr(str(yce))
+        #     if sensor is not None:
+        #         sensor.stop()
+        #     if robot is not None:
+        #         robot.stop()
+        #     if subscriber is not None and subscriber._started:
+        #         subscriber.stop()        
+        #     rospy.loginfo("Re-trying")
+        #     re_try = True
+        #     robot, subscriber, left_arm, right_arm, home_pose = init_robot(config)
 
 if __name__ == '__main__':
     
@@ -363,8 +398,6 @@ if __name__ == '__main__':
             sensor.stop()
         if robot is not None:
             robot.stop()
-        if subscriber is not None and subscriber._started:
-            subscriber.stop()            
         exit(0)
     signal.signal(signal.SIGINT, handler)
     

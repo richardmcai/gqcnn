@@ -1,28 +1,22 @@
-# visualization
-vis:
-  vis_cropped_rgbd_image: 0
-  vis_uncropped_color_image: 0
-  vis_uncropped_depth_image: 0
-
-# padding for the cropped images so when they are rotated to be centered on the grasp point there will not be any gaps where there is no part of the image
-width_pad: 0
-height_pad: 0
-
-# inpaint
-inpaint_rescale_factor: 0.5 # amount to rescale the images before inpainting (smaller numbers == faster code) 
+# sensor params
+sensor:
+  image_dir: data/rgbd/multiple_objects
+  type: virtual
+  frame: primesense_overhead
+calib_dir: data/calib
 
 # policy params
 policy:
+  # gqcnn params
+  gqcnn_model: /home/richardcai/GQ-Bin-Picking-Eps90
+  
   # optimization params
-  num_seed_samples: 200 # number of seed samples
+  num_seed_samples: 200
   num_gmm_samples: 50
   num_iters: 3
   gmm_refit_p: 0.25
   gmm_component_frac: 0.4
   gmm_reg_covar: 0.01
-
-  # gqcnn params
-  gqcnn_model: /home/richardcai/GQ-Bin-Picking-Eps90
 
   # general params
   deterministic: 1
@@ -32,20 +26,19 @@ policy:
 
   # sampling params
   sampling:
-
     # type
     type: antipodal_depth
 
     # antipodality
-    friction_coef: 0.8
+    friction_coef: 1.0
     depth_grad_thresh: 0.0025
     depth_grad_gaussian_sigma: 1.0
     downsample_rate: 4
-    max_rejection_samples: 2500
+    max_rejection_samples: 4000
 
     # distance
-    max_dist_from_center: 10000000
-    min_dist_from_boundary: 40
+    max_dist_from_center: 160
+    min_dist_from_boundary: 45
     min_grasp_dist: 2.5
     angle_dist_weight: 5.0
 
@@ -54,17 +47,19 @@ policy:
     depth_sample_win_height: 1
     depth_sample_win_width: 1
     min_depth_offset: 0.015
-    max_depth_offset: 0.0
+    max_depth_offset: 0.05
 
   # visualization
   vis:
     grasp_sampling : 0
     tf_images: 0
-    grasp_candidates: 0
+    grasp_candidates: 1
     elite_grasps: 0
     grasp_ranking: 0
     grasp_plan: 0
-    final_grasp: 0
+    final_grasp: 1
 
     k: 25
 
+# image proc params
+inpaint_rescale_factor: 0.5
