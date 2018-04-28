@@ -107,8 +107,10 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
         T_gripper_world.translation[2] = config['grasping']['min_gripper_depth']
 
     # get cur pose
-
-    T_cur_world = left_arm.get_pose()
+    cur_pose = subscriber.endpoint_pose()
+    r_cur_world = np.asarray([cur_pose.orientation.w, cur_pose.orientation.x, cur_pose.orientation.y, cur_pose.orientation.z])
+    t_cur_world = np.asarray([cur_pose.position.x, cur_pose.position.y, cur_pose.position.z])
+    T_cur_world = RigidTransform(rotation_quaternion, translation, 'grasp', T_camera_world.from_frame)
 
     # compute approach pose
     t_approach_target = np.array([0,0,config['grasping']['approach_dist']])
