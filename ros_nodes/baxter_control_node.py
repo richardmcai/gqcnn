@@ -38,7 +38,7 @@ import time
 from autolab_core import RigidTransform
 from autolab_core import YamlConfig
 from dexnet.grasping import RobotGripper
-# from yumipy import YuMiRobot, YuMiCommException, YuMiControlException, YuMiSubscriber
+# from yumipy import YuMiRobot, YuMiCommException, YuMiControlException, YuMilimb
 # from yumipy import YuMiConstants as YMC
 from baxter_interface import Limb
 from baxter_interface import Gripper
@@ -67,17 +67,28 @@ def open_gripper(gripper):
     gripper.open(block=True)
     rospy.sleep(1.0)
 
-def go_to_pose(arm, pose):
+def go_to_pose(arm, pose, v_scale=1.0):
     """Uses Moveit to go to the pose specified
     Parameters
     ----------
-    pose : :obj:`geometry_msgs.msg.Pose`
+    pose : :obj:`geometry_msgs.msg.Pose` or RigidTransform
         The pose to move to
     """
+    if isinstance(pose, RigidTransform)
+        pose = pose.pose_msg
     arm.set_start_state_to_current_state()
     arm.set_pose_target(pose)
+    arm.set_max_velocity_scaling_factor(v_scale)
     arm.plan()
     arm.go()
+
+def get_pose(limb)
+    """Returns a RigidTransform from limb toolframe to base frame"""
+    cur_pose = limb.endpoint_pose()
+    rotation = np.asarray([cur_pose.orientation.w, cur_pose.orientation.x, cur_pose.orientation.y, cur_pose.orientation.z])
+    translation = np.asarray([cur_pose.position.x, cur_pose.position.y, cur_pose.position.z])    
+    T_tool_base = RigidTransform(r_cur_world, t_cur_world, T_gripper_world.from_frame, T_gripper_world.to_frame)
+    return T_tool_base
 
 def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gripper, home_pose, config):
     """ Processes a ROS GQCNNGrasp message and executes the resulting grasp on the ABB Yumi """
@@ -91,7 +102,7 @@ def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gr
     
     if not config['robot_off']:
         rospy.loginfo('Executing Grasp!')
-        lifted_object, lift_gripper_width, lift_torque = execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, subscriber, config)
+        lifted_object, lift_gripper_width, lift_torque = execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, limb, config)
     
         # bring arm back to home pose 
         go_to_pose(left_arm, home_pose)
@@ -99,17 +110,14 @@ def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gr
 
         return lift_gripper_width, T_gripper_world
 
-def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, subscriber, config):
+def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, limb, config):
     """ Executes a single grasp for the hand pose T_gripper_world up to the point of lifting the object """
     # snap gripper to valid depth
     if T_gripper_world.translation[2] < config['grasping']['min_gripper_depth']:
         T_gripper_world.translation[2] = config['grasping']['min_gripper_depth']
 
-    # get cur pose as T from tool frame to base/world frame
-    cur_pose = subscriber.endpoint_pose()
-    r_cur_world = np.asarray([cur_pose.orientation.w, cur_pose.orientation.x, cur_pose.orientation.y, cur_pose.orientation.z])
-    t_cur_world = np.asarray([cur_pose.position.x, cur_pose.position.y, cur_pose.position.z])    
-    T_cur_world = RigidTransform(r_cur_world, t_cur_world, T_gripper_world.from_frame, T_gripper_world.to_frame)
+    # get cur pose
+    T_cur_world = get_pose(limb)
 
     # compute approach pose
     t_approach_target = np.array([0,0,config['grasping']['approach_dist']])
@@ -126,33 +134,26 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
     # compute lift pose
     t_delta_approach = T_approach_world.translation - T_cur_world.translation
 
-    # Collision Detection info
-    for _ in range(10):
-        _, torques = subscriber.left.get_torque()        
-    resting_torque = torques[3]
-
     # perform grasp on the robot, up until the point of lifting
-    right_arm.open_gripper(wait_for_res=True)
-    robot.set_z(config['control']['approach_zoning'])
-    left_arm.goto_pose(YMC.L_KINEMATIC_AVOIDANCE_POSE)
-    left_arm.goto_pose(T_approach_world)
+    open_gripper(left_arm)
+    go_to_pose(left_arm, YMC.L_KINEMATIC_AVOIDANCE_POSE.pose_msg)
+    go_to_pose(left_arm, T_approach_world.pose_msg)
 
     # grasp
     robot.set_v(config['control']['approach_velocity'])
-    robot.set_z(config['control']['standard_zoning'])
     if config['control']['test_collision']:
         robot.set_z('z200')
         T_gripper_world.translation[2] = 0.0
         left_arm.goto_pose(T_gripper_world, wait_for_res=True)
-        _, T_cur_gripper_world = subscriber.left.get_pose()
+        _, T_cur_gripper_world = limb.left.get_pose()
         dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
         collision = False
         for i in range(10):
-            _, torques = subscriber.left.get_torque()        
+            _, torques = limb.left.get_torque()        
         while dist_from_goal > 1e-3:
-            _, T_cur_gripper_world = subscriber.left.get_pose()
+            _, T_cur_gripper_world = limb.left.get_pose()
             dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
-            _, torques = subscriber.left.get_torque()
+            _, torques = limb.left.get_torque()
             print torques
             if torques[1] > 0.001:
                 logging.info('Detected collision!!!!!!')
@@ -203,7 +204,7 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
 
     # check gripper width
     for _ in range(10):
-        _, torques = subscriber.left.get_torque()        
+        _, torques = limb.left.get_torque()        
         lift_torque = torques[3]
         lift_gripper_width = right_arm.get_gripper_width()
 
@@ -217,7 +218,7 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
 def init_robot(config):
     """ Initializes the robot """
     robot = None
-    subscriber = None
+    limb = None
     initialized = False
     while not initialized:
         try:
@@ -238,19 +239,19 @@ def init_robot(config):
             right_gripper = Gripper('right')
             open_gripper(right_gripper)
 
-            subscriber = Limb('left')
+            limb = Limb('left')
 
             initialized = True
         except rospy.ServiceException as e:
             print e
-    return robot, subscriber, left_arm, right_arm, left_gripper, right_gripper, home_pose
+    return robot, limb, left_arm, right_arm, left_gripper, right_gripper, home_pose
 
 def run_experiment():
     """ Run the experiment """
 
     if not config['robot_off']:
         rospy.loginfo('Initializing YuMi')
-        robot, subscriber, left_arm, right_arm, left_gripper, right_gripper, home_pose = init_robot(config)
+        robot, limb, left_arm, right_arm, left_gripper, right_gripper, home_pose = init_robot(config)
     
     # create ROS CVBridge
     cv_bridge = CvBridge()
@@ -304,7 +305,7 @@ def run_experiment():
             planned_grasp_data = plan_grasp(inpainted_color_image.rosmsg, inpainted_depth_image.rosmsg, camera_intrinsics.rosmsg, boundingBox)
             grasp_plan_time = time.time() - start_time
 
-            lift_gripper_width, T_gripper_world = process_GQCNNGrasp(planned_grasp_data, robot, left_arm, right_arm, subscriber, home_pose, config)
+            lift_gripper_width, T_gripper_world = process_GQCNNGrasp(planned_grasp_data, robot, left_arm, right_arm, limb, home_pose, config)
 
             # get human label
             
