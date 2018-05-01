@@ -56,6 +56,8 @@ from cv_bridge import CvBridge, CvBridgeError
 
 from gqcnn import GraspIsolatedObjectExperimentLogger
 
+from recieve_images import input_reader
+
 
 def close_gripper(gripper):
     """closes the gripper"""
@@ -271,7 +273,8 @@ def run_experiment():
         # start the next trial
 
         # get the images from the sensor
-        color_image, depth_image, _ = sensor.frames()
+        color_image = sensor.rgb_image
+        depth_image = sensor.depth_image
         
         # log some trial info        
 
@@ -327,10 +330,7 @@ if __name__ == '__main__':
 
     # create rgbd sensor
     rospy.loginfo('Creating RGBD Sensor')
-    sensor_cfg = config['sensor_cfg']
-    sensor_type = sensor_cfg['type']
-    sensor = RgbdSensorFactory.sensor(sensor_type, sensor_cfg)
-    sensor.start()
+    sensor = input_reader()
     rospy.loginfo('Sensor Running')
 
     # setup safe termination

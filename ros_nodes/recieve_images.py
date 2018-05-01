@@ -27,5 +27,3 @@ def main():
 	reader = input_reader()
 	rospy.init_node('input_reader', anonymous = True)
 	ros.spin()
-
-
