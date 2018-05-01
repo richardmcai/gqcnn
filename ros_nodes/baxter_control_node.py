@@ -86,9 +86,8 @@ def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gr
 
     rotation_quaternion = np.asarray([grasp.pose.orientation.w, grasp.pose.orientation.x, grasp.pose.orientation.y, grasp.pose.orientation.z]) 
     translation = np.asarray([grasp.pose.position.x, grasp.pose.position.y, grasp.pose.position.z])
-    T_grasp_world = RigidTransform(rotation_quaternion, translation, 'grasp', T_camera_world.from_frame)
-    
-    T_gripper_world = T_camera_world * T_grasp_world * gripper.T_grasp_gripper
+    T_grasp_camera = RigidTransform(rotation_quaternion, translation, 'grasp', T_camera_world.from_frame)
+    T_gripper_world = T_camera_world * T_grasp_camera * gripper.T_grasp_gripper # reversed naming convention for gripper transforms
     
     if not config['robot_off']:
         rospy.loginfo('Executing Grasp!')
@@ -106,9 +105,11 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
     if T_gripper_world.translation[2] < config['grasping']['min_gripper_depth']:
         T_gripper_world.translation[2] = config['grasping']['min_gripper_depth']
 
-    # get cur pose
-
-    T_cur_world = left_arm.get_pose()
+    # get cur pose as T from tool frame to base/world frame
+    cur_pose = subscriber.endpoint_pose()
+    r_cur_world = np.asarray([cur_pose.orientation.w, cur_pose.orientation.x, cur_pose.orientation.y, cur_pose.orientation.z])
+    t_cur_world = np.asarray([cur_pose.position.x, cur_pose.position.y, cur_pose.position.z])    
+    T_cur_world = RigidTransform(r_cur_world, t_cur_world, T_gripper_world.from_frame, T_gripper_world.to_frame)
 
     # compute approach pose
     t_approach_target = np.array([0,0,config['grasping']['approach_dist']])
@@ -125,10 +126,12 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
     # compute lift pose
     t_delta_approach = T_approach_world.translation - T_cur_world.translation
 
-    # perform grasp on the robot, up until the point of lifting
+    # Collision Detection info
     for _ in range(10):
         _, torques = subscriber.left.get_torque()        
     resting_torque = torques[3]
+
+    # perform grasp on the robot, up until the point of lifting
     right_arm.open_gripper(wait_for_res=True)
     robot.set_z(config['control']['approach_zoning'])
     left_arm.goto_pose(YMC.L_KINEMATIC_AVOIDANCE_POSE)
