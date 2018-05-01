@@ -136,35 +136,32 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
 
     # perform grasp on the robot, up until the point of lifting
     open_gripper(left_arm)
-    go_to_pose(left_arm, YMC.L_KINEMATIC_AVOIDANCE_POSE.pose_msg)
-    go_to_pose(left_arm, T_approach_world.pose_msg)
+    go_to_pose(left_arm, YMC.L_KINEMATIC_AVOIDANCE_POSE)
+    go_to_pose(left_arm, T_approach_world)
 
     # grasp
-    robot.set_v(config['control']['approach_velocity'])
+    v_scale = config['control']['approach_velocity']
     if config['control']['test_collision']:
-        robot.set_z('z200')
         T_gripper_world.translation[2] = 0.0
-        left_arm.goto_pose(T_gripper_world, wait_for_res=True)
-        _, T_cur_gripper_world = limb.left.get_pose()
+        go_to_pose(left_arm, T_gripper_world, v_scale)
+        T_cur_gripper_world = get_pose(limb)
         dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
         collision = False
-        for i in range(10):
-            _, torques = limb.left.get_torque()        
+        torques = limb.joint_efforts()
         while dist_from_goal > 1e-3:
-            _, T_cur_gripper_world = limb.left.get_pose()
+            T_cur_gripper_world = get_pose(limb)
             dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
-            _, torques = limb.left.get_torque()
+            torques = limb.joint_efforts()
             print torques
-            if torques[1] > 0.001:
+            if torques['left_e0'] > 0.001: # not quite sure which joint torque to be checking
                 logging.info('Detected collision!!!!!!')
-                robot.set_z('fine')
-                left_arm.goto_pose(T_approach_world, wait_for_res=True)
+                go_to_pose(left_arm, T_approach_world, v_scale)
                 logging.info('Commanded!!!!!!')
                 collision = True
                 break
-            left_arm.goto_pose(T_gripper_world, wait_for_res=False)
+            go_to_pose(left_arm, T_gripper_world, v_scale)
     else:
-        left_arm.goto_pose(T_gripper_world, wait_for_res=True)
+        go_to_pose(left_arm, T_gripper_world)
     
     # pick up object
     
