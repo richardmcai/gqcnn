@@ -38,8 +38,6 @@ import time
 from autolab_core import RigidTransform
 from autolab_core import YamlConfig
 from dexnet.grasping import RobotGripper
-# from yumipy import YuMiRobot, YuMiCommException, YuMiControlException, YuMilimb
-# from yumipy import YuMiConstants as YMC
 from baxter_interface import Limb
 from baxter_interface import Gripper
 
@@ -59,8 +57,9 @@ from gqcnn import GraspIsolatedObjectExperimentLogger
 from recieve_images import input_reader
 
 
-def close_gripper(gripper):
+def close_gripper(gripper, force=30.0):
     """closes the gripper"""
+    gripper.set_holding_force(force)
     gripper.close(block=True)
     rospy.sleep(1.0)
 
@@ -100,7 +99,7 @@ def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gr
     rotation_quaternion = np.asarray([grasp.pose.orientation.w, grasp.pose.orientation.x, grasp.pose.orientation.y, grasp.pose.orientation.z]) 
     translation = np.asarray([grasp.pose.position.x, grasp.pose.position.y, grasp.pose.position.z])
     T_grasp_camera = RigidTransform(rotation_quaternion, translation, 'grasp', T_camera_world.from_frame)
-    T_gripper_world = T_camera_world * T_grasp_camera * gripper.T_grasp_gripper # reversed naming convention for gripper transforms
+    T_gripper_world = T_camera_world * T_grasp_camera * T_gripper_grasp
     
     if not config['robot_off']:
         rospy.loginfo('Executing Grasp!')
@@ -149,13 +148,10 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
         T_cur_gripper_world = get_pose(limb)
         dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
         collision = False
-        torques = limb.joint_efforts()
         while dist_from_goal > 1e-3:
             T_cur_gripper_world = get_pose(limb)
             dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
-            torques = limb.joint_efforts()
-            print torques
-            if torques['left_e0'] > 0.001: # not quite sure which joint torque to be checking
+            if limb.joint_effort('left_e0') > 0.001: # TODO: identify correct joint
                 logging.info('Detected collision!!!!!!')
                 go_to_pose(left_arm, T_approach_world, v_scale)
                 logging.info('Commanded!!!!!!')
@@ -166,15 +162,12 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
         go_to_pose(left_arm, T_gripper_world)
     
     # pick up object
+    close_gripper(left_gripper, force=config['control']['gripper_close_force'])
+    pickup_gripper_width = left_gripper.position() # a percentage
     
-    right_arm.close_gripper(force=config['control']['gripper_close_force'], wait_for_res=True)
-    pickup_gripper_width = right_arm.get_gripper_width()
-    robot.set_v(config['control']['standard_velocity'])
-    robot.set_z(config['control']['standard_zoning'])
-
-    go_to_pose(left_arm, T_lift_world)
-    go_to_pose(left_arm, YMC.L_KINEMATIC_AVOIDANCE_POSE)
-    go_to_pose(left_arm, YMC.L_PREGRASP_POSE)
+    go_to_pose(left_arm, T_lift_world, v_scale=config['control']['standard_velocity'])
+    go_to_pose(left_arm, YMC.L_KINEMATIC_AVOIDANCE_POSE, v_scale=config['control']['standard_velocity'])
+    go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=config['control']['standard_velocity'])
 
     # shake test
     if config['control']['shake_test']:
@@ -191,21 +184,17 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
         T_shake_up = YMC.L_PREGRASP_POSE.as_frames('gripper', 'world') * delta_T_up * delta_T
         T_shake_down = YMC.L_PREGRASP_POSE.as_frames('gripper', 'world') * delta_T_down * delta_T
 
-        robot.set_v(config['control']['shake_velocity'])
-        robot.set_z(config['control']['shake_zoning'])
+        v_scale = config['control']['shake_velocity']
         for i in range(config['control']['num_shakes']):
-            left_arm.goto_pose(T_shake_up, wait_for_res=False)
-            left_arm.goto_pose(YMC.L_PREGRASP_POSE, wait_for_res=False)
-            left_arm.goto_pose(T_shake_down, wait_for_res=False)
-            left_arm.goto_pose(YMC.L_PREGRASP_POSE, wait_for_res=False)
-        robot.set_v(config['control']['standard_velocity'])
-        robot.set_z(config['control']['standard_zoning'])
+            go_to_pose(left_arm, T_shake_up, v_scale)
+            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale)
+            go_to_pose(left_arm, T_shake_down, v_scale)
+            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale)
+        v_scale = config['control']['standard_velocity']
 
     # check gripper width
-    for _ in range(10):
-        _, torques = limb.left.get_torque()        
-        lift_torque = torques[3]
-        lift_gripper_width = right_arm.get_gripper_width()
+    lift_torque = limb.joint_effort('left_w0') # TODO: identify correct joint
+    lift_gripper_width = left_gripper.position() # a percentage
 
     # check drops
     lifted_object = False
@@ -249,7 +238,7 @@ def run_experiment():
     """ Run the experiment """
 
     if not config['robot_off']:
-        rospy.loginfo('Initializing YuMi')
+        rospy.loginfo('Initializing Baxter')
         robot, limb, left_arm, right_arm, left_gripper, right_gripper, home_pose = init_robot(config)
     
     # create ROS CVBridge
@@ -259,8 +248,8 @@ def run_experiment():
     rospy.wait_for_service('plan_gqcnn_grasp')
     plan_grasp = rospy.ServiceProxy('plan_gqcnn_grasp', GQCNNGraspPlanner)
 
-    # get camera intrinsics
-    camera_intrinsics = sensor.ir_intrinsics
+    # TODO: get camera intrinsics
+    camera_intrinsics = #sensor.ir_intrinsics
 
     # setup experiment logger
 
@@ -273,8 +262,15 @@ def run_experiment():
         # start the next trial
 
         # get the images from the sensor
-        color_image = sensor.rgb_image
-        depth_image = sensor.depth_image
+        raw_color = sensor.rgb_image
+        raw_depth = sensor.depth_image
+
+        ### Create wrapped Perception RGB and Depth Images by unpacking the ROS Images using CVBridge ###
+        try:
+            color_image = perception.ColorImage(cv_bridge.imgmsg_to_cv2(raw_color, "rgb8"), frame=camera_intrinsics.frame)
+            depth_image = perception.DepthImage(cv_bridge.imgmsg_to_cv2(raw_depth, desired_encoding = "passthrough"), frame=camera_intrinsics.frame)
+        except CvBridgeError as cv_bridge_exception:
+            rospy.logerr(cv_bridge_exception)
         
         # log some trial info        
 
@@ -316,15 +312,19 @@ def run_experiment():
 if __name__ == '__main__':
     
     # initialize the ROS node
-    rospy.init_node('Yumi_Control_Node')
+    rospy.init_node('Baxter_Control_Node')
 
-    config = YamlConfig('/home/autolab/Workspace/vishal_working/catkin_ws/src/gqcnn/cfg/ros_nodes/yumi_control_node.yaml')
+    # TODO
+    config = YamlConfig('./baxter_control_node.yaml')
 
-    rospy.loginfo('Loading Gripper')
-    gripper = RobotGripper.load('yumi_metal_spline')
+    # TODO
+    # Tf from tool frame to frame centered on point contact pair, i.e point between tip of parallel jaws
+    rospy.loginfo('Loading T_gripper_grasp')
+    T_gripper_grasp = RigidTransform.load('./T_gripper_grasp.tf')
 
+    # TODO
     rospy.loginfo('Loading T_camera_world')
-    T_camera_world = RigidTransform.load('/home/autolab/Public/alan/calib/primesense_overhead/primesense_overhead_to_world.tf')
+    T_camera_world = RigidTransform.load('./kinect_to_world.tf')
 
     detector_cfg = config['detector']
 
