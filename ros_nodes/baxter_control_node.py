@@ -287,6 +287,7 @@ def run_experiment():
         # start the next trial
 
         # get the images from the sensor
+        # TODO: Make sure this works
         raw_color = sensor.rgb_image
         raw_depth = sensor.depth_image
 
