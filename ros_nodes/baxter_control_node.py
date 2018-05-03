@@ -63,6 +63,13 @@ SHAKE_TEST = False
 TEST_COLLISION = False
 VISUALIZE_DETECTOR_OUTPUT = False
 
+# Poses; RigidTransform from tool to base
+# TODO: Define these
+L_PREGRASP_POSE = 
+L_KINEMATIC_AVOIDANCE_POSE = 
+L_HOME_STATE = 
+R_HOME_STATE = 
+
 # Grasping params
 MIN_GRIPPER_DEPTH = 0.0125
 GRASP_APPROACH_DIST = 0.075
@@ -166,7 +173,7 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
 
     # perform grasp on the robot, up until the point of lifting
     open_gripper(left_arm)
-    go_to_pose(left_arm, YMC.L_KINEMATIC_AVOIDANCE_POSE)
+    go_to_pose(left_arm, L_KINEMATIC_AVOIDANCE_POSE)
     go_to_pose(left_arm, T_approach_world)
 
     # grasp
@@ -194,8 +201,8 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
     pickup_gripper_width = left_gripper.position() # a percentage
     
     go_to_pose(left_arm, T_lift_world, v_scale=STANDARD_VELOCITY)
-    go_to_pose(left_arm, YMC.L_KINEMATIC_AVOIDANCE_POSE, v_scale=STANDARD_VELOCITY)
-    go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=STANDARD_VELOCITY)
+    go_to_pose(left_arm, L_KINEMATIC_AVOIDANCE_POSE, v_scale=STANDARD_VELOCITY)
+    go_to_pose(left_arm, L_PREGRASP_POSE, v_scale=STANDARD_VELOCITY)
 
     # shake test
     if SHAKE_TEST:
@@ -208,14 +215,14 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
                             [0, np.sin(angle), np.cos(angle)]])
         delta_T_up = RigidTransform(rotation=R_shake, translation=[0,0,-radius], from_frame='gripper', to_frame='gripper')
         delta_T_down = RigidTransform(rotation=R_shake.T, translation=[0,0,-radius], from_frame='gripper', to_frame='gripper')
-        T_shake_up = YMC.L_PREGRASP_POSE.as_frames('gripper', 'world') * delta_T_up * delta_T
-        T_shake_down = YMC.L_PREGRASP_POSE.as_frames('gripper', 'world') * delta_T_down * delta_T
+        T_shake_up = L_PREGRASP_POSE.as_frames('gripper', 'world') * delta_T_up * delta_T
+        T_shake_down = L_PREGRASP_POSE.as_frames('gripper', 'world') * delta_T_down * delta_T
 
         for i in range(NUM_SHAKES):
             go_to_pose(left_arm, T_shake_up, v_scale=SHAKE_VELOCITY)
-            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=SHAKE_VELOCITY)
+            go_to_pose(left_arm, L_PREGRASP_POSE, v_scale=SHAKE_VELOCITY)
             go_to_pose(left_arm, T_shake_down, v_scale=SHAKE_VELOCITY)
-            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=SHAKE_VELOCITY)
+            go_to_pose(left_arm, L_PREGRASP_POSE, v_scale=SHAKE_VELOCITY)
 
     # check gripper width
     lift_torque = limb.joint_effort('left_w0') # TODO: identify correct joint
@@ -240,11 +247,11 @@ def init_robot(config):
             robot = moveit_commander.RobotCommander()
 
             left_arm = moveit_commander.MoveGroupCommander('left_arm')
-            go_to_pose(left_arm, YMC.L_HOME_STATE)
-            home_pose = YMC.L_PREGRASP_POSE
+            go_to_pose(left_arm, L_HOME_STATE)
+            home_pose = L_PREGRASP_POSE
 
             right_arm = moveit_commander.MoveGroupCommander('right_arm')
-            go_to_pose(right_arm, YMC.R_HOME_STATE)
+            go_to_pose(right_arm, R_HOME_STATE)
 
             left_gripper = Gripper('left')
             open_gripper(left_gripper)
