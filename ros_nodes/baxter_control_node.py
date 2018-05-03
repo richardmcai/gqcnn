@@ -55,9 +55,38 @@ from gqcnn import GraspIsolatedObjectExperimentLogger
 
 from recieve_images import input_reader
 
+### CONFIG ###
+
+# Experiment Flow
+ENABLE_ROBOT = False
+SHAKE_TEST = False
+TEST_COLLISION = False
+VISUALIZE_DETECTOR_OUTPUT = False
+
+# Grasping params
+MIN_GRIPPER_DEPTH = 0.0125
+GRASP_APPROACH_DIST = 0.075
+GRASP_LIFT_HEIGHT = 0.1
+GRASP_PICKUP_MIN_WIDTH = 0.0001
+GRIPPER_CLOSE_FORCE = 30.0 # percentage [0.0, 100.0]
+
+# Velocity params; fractions [0.0,1.0]
+APPROACH_VELOCITY = 0.5
+STANDARD_VELOCITY = 1.0
+SHAKE_VELOCITY = 1.0
+
+# Shake config
+SHAKE_RADIUS = 0.2
+SHAKE_ANGLE = 0.03
+NUM_SHAKES = 3
+
+# Visualize configs
+INPAINT_RESCALE_FACTOR = 1.0
+
+########
 
 def close_gripper(gripper, force=30.0):
-    """closes the gripper"""
+    """closes the gripper; force is a percentage of max force"""
     gripper.set_holding_force(force)
     gripper.close(block=True)
     rospy.sleep(1.0)
@@ -73,6 +102,7 @@ def go_to_pose(arm, pose, v_scale=1.0):
     ----------
     pose : :obj:`geometry_msgs.msg.Pose` or RigidTransform
         The pose to move to
+    v_scale : fraction of max possible velocity
     """
     if isinstance(pose, RigidTransform)
         pose = pose.pose_msg
@@ -100,7 +130,7 @@ def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gr
     T_grasp_camera = RigidTransform(rotation_quaternion, translation, 'grasp', T_camera_world.from_frame)
     T_gripper_world = T_camera_world * T_grasp_camera * T_gripper_grasp
     
-    if not config['robot_off']:
+    if ENABLE_ROBOT:
         rospy.loginfo('Executing Grasp!')
         lifted_object, lift_gripper_width, lift_torque = execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, limb, config)
     
@@ -113,19 +143,19 @@ def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gr
 def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, limb, config):
     """ Executes a single grasp for the hand pose T_gripper_world up to the point of lifting the object """
     # snap gripper to valid depth
-    if T_gripper_world.translation[2] < config['grasping']['min_gripper_depth']:
-        T_gripper_world.translation[2] = config['grasping']['min_gripper_depth']
+    if T_gripper_world.translation[2] < MIN_GRIPPER_DEPTH:
+        T_gripper_world.translation[2] = MIN_GRIPPER_DEPTH
 
     # get cur pose
     T_cur_world = get_pose(limb)
 
     # compute approach pose
-    t_approach_target = np.array([0,0,config['grasping']['approach_dist']])
+    t_approach_target = np.array([0,0,GRASP_APPROACH_DIST])
     T_gripper_approach = RigidTransform(translation=t_approach_target,
                                         from_frame='gripper',
                                         to_frame='gripper')
     T_approach_world = T_gripper_world * T_gripper_approach.inverse()
-    t_lift_target = np.array([0,0,config['grasping']['lift_height']])
+    t_lift_target = np.array([0,0,GRASP_LIFT_HEIGHT])
     T_gripper_lift = RigidTransform(translation=t_lift_target,
                                     from_frame='gripper',
                                     to_frame='gripper')
@@ -140,9 +170,9 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
     go_to_pose(left_arm, T_approach_world)
 
     # grasp
-    if config['control']['test_collision']:
+    if TEST_COLLISION:
         T_gripper_world.translation[2] = 0.0
-        go_to_pose(left_arm, T_gripper_world, v_scale=config['control']['approach_velocity'])
+        go_to_pose(left_arm, T_gripper_world, v_scale=APPROACH_VELOCITY)
         T_cur_gripper_world = get_pose(limb)
         dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
         collision = False
@@ -151,28 +181,27 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
             dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
             if limb.joint_effort('left_e0') > 0.001: # TODO: identify correct joint
                 logging.info('Detected collision!!!!!!')
-                go_to_pose(left_arm, T_approach_world, v_scale=config['control']['approach_velocity'])
+                go_to_pose(left_arm, T_approach_world, v_scale=APPROACH_VELOCITY)
                 logging.info('Commanded!!!!!!')
                 collision = True
                 break
-            go_to_pose(left_arm, T_gripper_world, v_scale=config['control']['approach_velocity'])
+            go_to_pose(left_arm, T_gripper_world, v_scale=APPROACH_VELOCITY)
     else:
         go_to_pose(left_arm, T_gripper_world)
     
     # pick up object
-    close_gripper(left_gripper, force=config['control']['gripper_close_force'])
+    close_gripper(left_gripper, force=GRIPPER_CLOSE_FORCE)
     pickup_gripper_width = left_gripper.position() # a percentage
     
-    go_to_pose(left_arm, T_lift_world, v_scale=config['control']['standard_velocity'])
-    go_to_pose(left_arm, YMC.L_KINEMATIC_AVOIDANCE_POSE, v_scale=config['control']['standard_velocity'])
-    go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=config['control']['standard_velocity'])
+    go_to_pose(left_arm, T_lift_world, v_scale=STANDARD_VELOCITY)
+    go_to_pose(left_arm, YMC.L_KINEMATIC_AVOIDANCE_POSE, v_scale=STANDARD_VELOCITY)
+    go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=STANDARD_VELOCITY)
 
     # shake test
-    if config['control']['shake_test']:
-
+    if SHAKE_TEST:
         # compute shake poses
-        radius = config['control']['shake_radius']
-        angle = config['control']['shake_angle'] * np.pi
+        radius = SHAKE_RADIUS
+        angle = SHAKE_ANGLE * np.pi
         delta_T = RigidTransform(translation=[0,0,radius], from_frame='gripper', to_frame='gripper')
         R_shake = np.array([[1, 0, 0],
                             [0, np.cos(angle), -np.sin(angle)],
@@ -182,11 +211,11 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
         T_shake_up = YMC.L_PREGRASP_POSE.as_frames('gripper', 'world') * delta_T_up * delta_T
         T_shake_down = YMC.L_PREGRASP_POSE.as_frames('gripper', 'world') * delta_T_down * delta_T
 
-        for i in range(config['control']['num_shakes']):
-            go_to_pose(left_arm, T_shake_up, v_scale=config['control']['shake_velocity'])
-            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=config['control']['shake_velocity'])
-            go_to_pose(left_arm, T_shake_down, v_scale=config['control']['shake_velocity'])
-            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=config['control']['shake_velocity'])
+        for i in range(NUM_SHAKES):
+            go_to_pose(left_arm, T_shake_up, v_scale=SHAKE_VELOCITY)
+            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=SHAKE_VELOCITY)
+            go_to_pose(left_arm, T_shake_down, v_scale=SHAKE_VELOCITY)
+            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=SHAKE_VELOCITY)
 
     # check gripper width
     lift_torque = limb.joint_effort('left_w0') # TODO: identify correct joint
@@ -194,7 +223,7 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
 
     # check drops
     lifted_object = False
-    if np.abs(lift_gripper_width) > config['grasping']['pickup_min_width']:
+    if np.abs(lift_gripper_width) > GRASP_PICKUP_MIN_WIDTH:
         lifted_object = True
 
     return lifted_object, lift_gripper_width, lift_torque
@@ -233,7 +262,7 @@ def init_robot(config):
 def run_experiment():
     """ Run the experiment """
 
-    if not config['robot_off']:
+    if ENABLE_ROBOT:
         rospy.loginfo('Initializing Baxter')
         robot, limb, left_arm, right_arm, left_gripper, right_gripper, home_pose = init_robot(config)
     
@@ -244,7 +273,7 @@ def run_experiment():
     rospy.wait_for_service('plan_gqcnn_grasp')
     plan_grasp = rospy.ServiceProxy('plan_gqcnn_grasp', GQCNNGraspPlanner)
 
-    # TODO: get camera intrinsics
+    # TODO: get camera intrinsics, cast as perception.CameraIntrinsics
     camera_intrinsics = #sensor.ir_intrinsics
 
     # setup experiment logger
@@ -271,14 +300,14 @@ def run_experiment():
         # log some trial info        
 
         # inpaint to remove holes
-        inpainted_color_image = color_image.inpaint(rescale_factor=config['inpaint_rescale_factor'])
-        inpainted_depth_image = depth_image.inpaint(rescale_factor=config['inpaint_rescale_factor'])
+        inpainted_color_image = color_image.inpaint(rescale_factor=INPAINT_RESCALE_FACTOR)
+        inpainted_depth_image = depth_image.inpaint(rescale_factor=INPAINT_RESCALE_FACTOR)
 
         detector = RgbdDetectorFactory.detector('point_cloud_box')
         detection = detector.detect(inpainted_color_image, inpainted_depth_image, detector_cfg, camera_intrinsics, T_camera_world, vis_foreground=False, vis_segmentation=False
             )[0]
 
-        if config['vis']['vis_detector_output']:
+        if VISUALIZE_DETECTOR_OUTPUT:
             vis.figure()
             vis.subplot(1,2,1)
             vis.imshow(detection.color_thumbnail)
@@ -310,7 +339,6 @@ if __name__ == '__main__':
     # initialize the ROS node
     rospy.init_node('Baxter_Control_Node')
 
-    # TODO
     config = YamlConfig('./baxter_control_node.yaml')
 
     # Tf gripper frame to grasp cannonical frame (y-axis = grasp axis, x-axis = palm axis)
@@ -318,7 +346,7 @@ if __name__ == '__main__':
     rospy.loginfo('Loading T_gripper_grasp')
     T_gripper_grasp = RigidTransform()
 
-    # TODO
+    # TODO: mount kinect, generate kinect_to_world tf
     rospy.loginfo('Loading T_camera_world')
     T_camera_world = RigidTransform.load('./kinect_to_world.tf')
 
