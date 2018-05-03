@@ -37,13 +37,12 @@ import time
 
 from autolab_core import RigidTransform
 from autolab_core import YamlConfig
-from dexnet.grasping import RobotGripper
 from baxter_interface import Limb
 from baxter_interface import Gripper
 
 from visualization import Visualizer2D as vis
 import perception as perception
-from perception import RgbdDetectorFactory, RgbdSensorFactory
+from perception import RgbdDetectorFactory
 from gqcnn import Visualizer as vis
 
 from gqcnn.msg import GQCNNGrasp, BoundingBox
@@ -141,10 +140,9 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
     go_to_pose(left_arm, T_approach_world)
 
     # grasp
-    v_scale = config['control']['approach_velocity']
     if config['control']['test_collision']:
         T_gripper_world.translation[2] = 0.0
-        go_to_pose(left_arm, T_gripper_world, v_scale)
+        go_to_pose(left_arm, T_gripper_world, v_scale=config['control']['approach_velocity'])
         T_cur_gripper_world = get_pose(limb)
         dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
         collision = False
@@ -153,11 +151,11 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
             dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
             if limb.joint_effort('left_e0') > 0.001: # TODO: identify correct joint
                 logging.info('Detected collision!!!!!!')
-                go_to_pose(left_arm, T_approach_world, v_scale)
+                go_to_pose(left_arm, T_approach_world, v_scale=config['control']['approach_velocity'])
                 logging.info('Commanded!!!!!!')
                 collision = True
                 break
-            go_to_pose(left_arm, T_gripper_world, v_scale)
+            go_to_pose(left_arm, T_gripper_world, v_scale=config['control']['approach_velocity'])
     else:
         go_to_pose(left_arm, T_gripper_world)
     
@@ -184,13 +182,11 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
         T_shake_up = YMC.L_PREGRASP_POSE.as_frames('gripper', 'world') * delta_T_up * delta_T
         T_shake_down = YMC.L_PREGRASP_POSE.as_frames('gripper', 'world') * delta_T_down * delta_T
 
-        v_scale = config['control']['shake_velocity']
         for i in range(config['control']['num_shakes']):
-            go_to_pose(left_arm, T_shake_up, v_scale)
-            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale)
-            go_to_pose(left_arm, T_shake_down, v_scale)
-            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale)
-        v_scale = config['control']['standard_velocity']
+            go_to_pose(left_arm, T_shake_up, v_scale=config['control']['shake_velocity'])
+            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=config['control']['shake_velocity'])
+            go_to_pose(left_arm, T_shake_down, v_scale=config['control']['shake_velocity'])
+            go_to_pose(left_arm, YMC.L_PREGRASP_POSE, v_scale=config['control']['shake_velocity'])
 
     # check gripper width
     lift_torque = limb.joint_effort('left_w0') # TODO: identify correct joint
@@ -317,10 +313,10 @@ if __name__ == '__main__':
     # TODO
     config = YamlConfig('./baxter_control_node.yaml')
 
-    # TODO
-    # Tf from tool frame to frame centered on point contact pair, i.e point between tip of parallel jaws
+    # Tf gripper frame to grasp cannonical frame (y-axis = grasp axis, x-axis = palm axis)
+    # On Baxter this is just the identity
     rospy.loginfo('Loading T_gripper_grasp')
-    T_gripper_grasp = RigidTransform.load('./T_gripper_grasp.tf')
+    T_gripper_grasp = RigidTransform()
 
     # TODO
     rospy.loginfo('Loading T_camera_world')
