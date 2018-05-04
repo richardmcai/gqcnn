@@ -56,6 +56,7 @@ from gqcnn import GraspIsolatedObjectExperimentLogger
 from recieve_images import input_reader
 
 ### CONFIG ###
+CFG_PATH = '../cfg/ros_nodes/'
 
 # Experiment Flow
 ENABLE_ROBOT = False
@@ -64,11 +65,10 @@ TEST_COLLISION = False
 VISUALIZE_DETECTOR_OUTPUT = False
 
 # Poses; RigidTransform from tool to base
-# TODO: Define these
-L_PREGRASP_POSE = 
-L_KINEMATIC_AVOIDANCE_POSE = 
-L_HOME_STATE = 
-R_HOME_STATE = 
+L_HOME_STATE = RigidTransform.load(CFG_PATH + 'L_HOME_STATE.tf')
+R_HOME_STATE = RigidTransform.load(CFG_PATH + 'R_HOME_STATE.tf')
+L_PREGRASP_POSE = RigidTransform.load(CFG_PATH + 'L_PREGRASP_POSE.tf')
+L_KINEMATIC_AVOIDANCE_POSE = RigidTransform.load(CFG_PATH + 'L_KINEMATIC_AVOIDANCE_POSE.tf')
 
 # Grasping params
 MIN_GRIPPER_DEPTH = 0.0125
@@ -88,7 +88,7 @@ SHAKE_ANGLE = 0.03
 NUM_SHAKES = 3
 
 # Visualize configs
-INPAINT_RESCALE_FACTOR = 1.0
+INPAINT_RESCALE_FACTOR = 0.5
 
 ########
 
@@ -280,8 +280,7 @@ def run_experiment():
     rospy.wait_for_service('plan_gqcnn_grasp')
     plan_grasp = rospy.ServiceProxy('plan_gqcnn_grasp', GQCNNGraspPlanner)
 
-    # TODO: get camera intrinsics, cast as perception.CameraIntrinsics
-    camera_intrinsics = #sensor.ir_intrinsics
+    camera_intrinsics = perception.PrimesenseSensor().ir_intrinsics
 
     # setup experiment logger
 
@@ -347,16 +346,16 @@ if __name__ == '__main__':
     # initialize the ROS node
     rospy.init_node('Baxter_Control_Node')
 
-    config = YamlConfig('./baxter_control_node.yaml')
+    config = YamlConfig(CFG_PATH + 'baxter_control_node.yaml')
 
     # Tf gripper frame to grasp cannonical frame (y-axis = grasp axis, x-axis = palm axis)
     # On Baxter this is just the identity
     rospy.loginfo('Loading T_gripper_grasp')
-    T_gripper_grasp = RigidTransform()
+    T_gripper_grasp = RigidTransform(from_frame='gripper', to_frame='grasp')
 
-    # TODO: mount kinect, generate kinect_to_world tf
+    # TODO: write a script to calibrate this automatically
     rospy.loginfo('Loading T_camera_world')
-    T_camera_world = RigidTransform.load('./kinect_to_world.tf')
+    T_camera_world = RigidTransform.load(CFG_PATH + 'kinect_to_world.tf')
 
     detector_cfg = config['detector']
 
