@@ -124,7 +124,7 @@ def get_pose(limb)
     cur_pose = limb.endpoint_pose()
     rotation = np.asarray([cur_pose.orientation.w, cur_pose.orientation.x, cur_pose.orientation.y, cur_pose.orientation.z])
     translation = np.asarray([cur_pose.position.x, cur_pose.position.y, cur_pose.position.z])    
-    T_tool_base = RigidTransform(r_cur_world, t_cur_world, T_gripper_world.from_frame, T_gripper_world.to_frame)
+    T_tool_base = RigidTransform(rotation, translation, T_gripper_world.from_frame, T_gripper_world.to_frame)
     return T_tool_base
 
 def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gripper, home_pose, config):
