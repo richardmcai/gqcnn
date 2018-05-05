@@ -51,6 +51,9 @@ detector:
 
   pushable_image_right_thresh: 365.0
 
+  image_height: 480
+  image_width: 640
+
   workspace:
     crop_center_px:
       - 190
@@ -58,6 +61,8 @@ detector:
     crop_dim:
       - 360
       - 460
+
+
 
 # general experiment parameters
 experiment_dir: /mnt/hdd/dex-net/experiments/gqcnn_ros_node
