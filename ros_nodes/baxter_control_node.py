@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 Copyright ©2017. The Regents of the University of California (Regents). All Rights Reserved.
@@ -19,7 +20,7 @@ PURPOSE. THE SOFTWARE AND ACCOMPANYING DOCUMENTATION, IF ANY, PROVIDED
 HEREUNDER IS PROVIDED "AS IS". REGENTS HAS NO OBLIGATION TO PROVIDE
 MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 """
-#!/usr/bin/env python
+
 """
 Example node for planning grasps from point clouds using the gqcnn module and
 executing the grasps with an ABB YuMi.
@@ -289,7 +290,7 @@ def run_experiment():
     plan_grasp = rospy.ServiceProxy('plan_gqcnn_grasp', GQCNNGraspPlanner)
 
     camera_intrinsics = perception.PrimesenseSensor().ir_intrinsics
-    camera_intrinsics._frame = 'kinect'
+    camera_intrinsics._frame = T_camera_world.from_frame
 
     # setup experiment logger
 
@@ -302,7 +303,6 @@ def run_experiment():
         # start the next trial
 
         # get the images from the sensor
-        # TODO: Make sure this works
         raw_color, raw_depth = None, None
         while raw_color == None or raw_depth == None:
             raw_color = sensor.rgb_image

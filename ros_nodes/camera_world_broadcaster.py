@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 Copyright ©2017. The Regents of the University of California (Regents). All Rights Reserved.
@@ -19,7 +20,7 @@ PURPOSE. THE SOFTWARE AND ACCOMPANYING DOCUMENTATION, IF ANY, PROVIDED
 HEREUNDER IS PROVIDED "AS IS". REGENTS HAS NO OBLIGATION TO PROVIDE
 MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 """
-#!/usr/bin/env python
+
 import rospy
 import tf2_ros
 from geometry_msgs.msg import TransformStamped
@@ -32,7 +33,7 @@ if __name__ == '__main__':
 
 	# load RigidTransform
 	rospy.loginfo('Loading T_camera_world')
-	T_camera_world = RigidTransform.load('/home/autolab/Public/alan/calib/primesense_overhead/primesense_overhead_to_world.tf')
+	T_camera_world = RigidTransform.load('../data/calib/kinect/kinect_to_world.tf')
 
     # create broadcaster
 	transform_broadcaster = tf2_ros.TransformBroadcaster()
@@ -40,8 +41,8 @@ if __name__ == '__main__':
     # create Stamped ROS Transform
 	camera_world_transform = TransformStamped()
 	camera_world_transform.header.stamp = rospy.Time.now()
-	camera_world_transform.header.frame_id = 'primesense_overhead_rgb_optical_frame'
-	camera_world_transform.child_frame_id = 'world'
+	camera_world_transform.header.frame_id = T_camera_world.from_frame
+	camera_world_transform.child_frame_id = T_camera_world.to_frame
        
 	camera_world_transform.transform.translation.x = T_camera_world.translation[0]
 	camera_world_transform.transform.translation.y = T_camera_world.translation[1]
