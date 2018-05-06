@@ -8,7 +8,7 @@ class input_reader:
 	def __init__(self):
 		self.depth_image = None
 		self.rgb_image = None
-		self.depth_sub = rospy.Subscriber("/camera/depth/image", Image, self.readDepth)
+		self.depth_sub = rospy.Subscriber("/camera/depth_registered/image", Image, self.readDepth)
 		self.rgb_sub = rospy.Subscriber("/camera/rgb/image_color", Image, self.readRGB)
 
 	def readDepth(self, data):

@@ -80,7 +80,7 @@ GRASP_PICKUP_MIN_WIDTH = 0.0001
 GRIPPER_CLOSE_FORCE = 30.0 # percentage [0.0, 100.0]
 
 # Velocity params; fractions [0.0,1.0]
-APPROACH_VELOCITY = 0.5
+APPROACH_VELOCITY = 1.0
 STANDARD_VELOCITY = 1.0
 SHAKE_VELOCITY = 1.0
 
@@ -98,12 +98,10 @@ def close_gripper(gripper, force=30.0):
     """closes the gripper; force is a percentage of max force"""
     gripper.set_holding_force(force)
     gripper.close(block=True)
-    rospy.sleep(1.0)
 
 def open_gripper(gripper):
     """opens the gripper"""
     gripper.open(block=True)
-    rospy.sleep(1.0)
 
 def go_to_pose(arm, pose, v_scale=1.0):
     """Uses Moveit to go to the pose specified
@@ -292,23 +290,28 @@ def run_experiment():
     cv_bridge = CvBridge()
     
     # wait for Grasp Planning Service and create Service Proxy
+    rospy.loginfo("waiting for planner node")
     rospy.wait_for_service('plan_gqcnn_grasp')
     plan_grasp = rospy.ServiceProxy('plan_gqcnn_grasp', GQCNNGraspPlanner)
 
+    rospy.loginfo("loading camera intrinsics")
     camera_intrinsics = perception.PrimesenseSensor().ir_intrinsics
     camera_intrinsics._frame = T_camera_world.from_frame
+    #rospy.wait_for_message('/camera/depth/camera_info', CameraInfo)
 
     # setup experiment logger
 
     object_keys = config['test_object_keys']
 
+    raw_input("Press ENTER when ready ...")
     while True:
         
         # rospy.loginfo('Please place object: ' + obj + ' on the workspace.')
-        raw_input("Press ENTER when ready ...")
+        # raw_input("Press ENTER when ready ...")
         # start the next trial
 
         # get the images from the sensor
+        rospy.loginfo("waiting for images")
         raw_color, raw_depth = None, None
         while raw_color == None or raw_depth == None:
             raw_color = sensor.rgb_image
@@ -316,8 +319,8 @@ def run_experiment():
 
         ### Create wrapped Perception RGB and Depth Images by unpacking the ROS Images using CVBridge ###
         try:
-            color_image = perception.ColorImage(cv_bridge.imgmsg_to_cv2(raw_color, "rgb8"), frame=camera_intrinsics.frame)
-            depth_image = perception.DepthImage(cv_bridge.imgmsg_to_cv2(raw_depth, desired_encoding = "passthrough"), frame=camera_intrinsics.frame)
+            color_image = perception.ColorImage(cv_bridge.imgmsg_to_cv2(raw_color, "rgb8"), frame=T_camera_world.from_frame)
+            depth_image = perception.DepthImage(cv_bridge.imgmsg_to_cv2(raw_depth, desired_encoding = "passthrough"), frame=T_camera_world.from_frame)
         except CvBridgeError as cv_bridge_exception:
             rospy.logerr(cv_bridge_exception)
         

@@ -191,6 +191,11 @@ class GraspPlanner(object):
         # return GQCNNGrasp msg
         rospy.loginfo('Total grasp planning time: ' + str(time.time() - grasp_planning_start_time) + ' secs.')
 
+        # if self.cfg['vis']['final_grasp']:
+        #     vis.imshow(rgbd_image_state.rgbd_im)
+        #     vis.grasp(grasp.grasp, scale=1.5, show_center=False, show_axis=True)
+        #     vis.show()
+
         return gqcnn_grasp
 
 if __name__ == '__main__':
