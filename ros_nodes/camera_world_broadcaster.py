@@ -40,9 +40,9 @@ if __name__ == '__main__':
 
     # create Stamped ROS Transform
 	camera_world_transform = TransformStamped()
-	camera_world_transform.header.stamp = rospy.Time(0)
-	camera_world_transform.header.frame_id = T_camera_world.from_frame
-	camera_world_transform.child_frame_id = T_camera_world.to_frame
+	camera_world_transform.header.stamp = rospy.Time.now()
+	camera_world_transform.header.frame_id = T_camera_world.to_frame
+	camera_world_transform.child_frame_id = T_camera_world.from_frame
        
 	camera_world_transform.transform.translation.x = T_camera_world.translation[0]
 	camera_world_transform.transform.translation.y = T_camera_world.translation[1]

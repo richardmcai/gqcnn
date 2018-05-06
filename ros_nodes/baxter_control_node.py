@@ -31,6 +31,7 @@ This file is intended as an example, not as code that will run with standard ins
 Author: Vishal Satish
 """
 import rospy
+import tf
 import logging
 import numpy as np
 import signal
@@ -72,16 +73,16 @@ L_PREGRASP_POSE = RigidTransform.load(CFG_PATH + 'L_PREGRASP_POSE.tf')
 L_KINEMATIC_AVOIDANCE_POSE = RigidTransform.load(CFG_PATH + 'L_KINEMATIC_AVOIDANCE_POSE.tf')
 
 # Grasping params
-MIN_GRIPPER_DEPTH = 0.0125
+MIN_GRIPPER_DEPTH = -0.175
 GRASP_APPROACH_DIST = 0.075
 GRASP_LIFT_HEIGHT = 0.1
 GRASP_PICKUP_MIN_WIDTH = 0.0001
 GRIPPER_CLOSE_FORCE = 30.0 # percentage [0.0, 100.0]
 
 # Velocity params; fractions [0.0,1.0]
-APPROACH_VELOCITY = 0.2#0.5
-STANDARD_VELOCITY = 0.2#1.0
-SHAKE_VELOCITY = 0.2#1.0
+APPROACH_VELOCITY = 0.5
+STANDARD_VELOCITY = 1.0
+SHAKE_VELOCITY = 1.0
 
 # Shake config
 SHAKE_RADIUS = 0.2
@@ -138,13 +139,17 @@ def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gr
     translation = np.asarray([grasp.pose.position.x, grasp.pose.position.y, grasp.pose.position.z])
     T_grasp_camera = RigidTransform(rotation_quaternion, translation, 'grasp', T_camera_world.from_frame)
     T_gripper_world = T_camera_world * T_grasp_camera * T_gripper_grasp
+
+    autolab_q = T_gripper_world.quaternion
+    ros_q = np.array([autolab_q[1],autolab_q[2],autolab_q[3],autolab_q[0]])
+    broadcaster.sendTransform(T_gripper_world.translation, ros_q, rospy.Time(0),
+        T_gripper_world.from_frame, T_gripper_world.to_frame)
     
     if ENABLE_ROBOT:
         rospy.loginfo('Executing Grasp!')
         lifted_object, lift_gripper_width, lift_torque = execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, limb, config)
     
         # bring arm back to home pose 
-        rospy.loginfo('Going Home')
         go_to_pose(left_arm, home_pose)
         open_gripper(left_gripper)
 
@@ -176,13 +181,13 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
 
     # perform grasp on the robot, up until the point of lifting
     open_gripper(left_gripper)
-    rospy.loginfo('Going Kin avoid')
-    go_to_pose(left_arm, L_KINEMATIC_AVOIDANCE_POSE)
-    rospy.loginfo('going approach')
+    # rospy.loginfo('Going Kin avoid')
+    # go_to_pose(left_arm, L_KINEMATIC_AVOIDANCE_POSE)
+    rospy.loginfo('approaching')
     go_to_pose(left_arm, T_approach_world)
 
     # grasp
-    rospy.loginfo('going grasp')
+    rospy.loginfo('going to grasp')
     if TEST_COLLISION:
         T_gripper_world.translation[2] = 0.0
         go_to_pose(left_arm, T_gripper_world, v_scale=APPROACH_VELOCITY)
@@ -207,10 +212,11 @@ def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, rig
     close_gripper(left_gripper, force=GRIPPER_CLOSE_FORCE)
     pickup_gripper_width = left_gripper.position() # a percentage
     
-    rospy.loginfo('lifting')
-    go_to_pose(left_arm, T_lift_world, v_scale=STANDARD_VELOCITY)
-    rospy.loginfo('return to kin avoid')
-    go_to_pose(left_arm, L_KINEMATIC_AVOIDANCE_POSE, v_scale=STANDARD_VELOCITY)
+    #lift object
+    # rospy.loginfo('lifting')
+    # go_to_pose(left_arm, T_lift_world, v_scale=STANDARD_VELOCITY)
+    # rospy.loginfo('return to kin avoid')
+    # go_to_pose(left_arm, L_KINEMATIC_AVOIDANCE_POSE, v_scale=STANDARD_VELOCITY)
     
     rospy.loginfo('going home')
     go_to_pose(left_arm, L_PREGRASP_POSE, v_scale=STANDARD_VELOCITY)
@@ -339,10 +345,10 @@ def run_experiment():
         # boundingBox.maxY = detection.bounding_box.max_pt[0]
         # boundingBox.maxX = detection.bounding_box.max_pt[1]
 
-        boundingBox.minY = 30 * INPAINT_RESCALE_FACTOR
-        boundingBox.minX = 50 * INPAINT_RESCALE_FACTOR
-        boundingBox.maxY = 240 * INPAINT_RESCALE_FACTOR
-        boundingBox.maxX = 590 * INPAINT_RESCALE_FACTOR
+        boundingBox.minY = 0 * INPAINT_RESCALE_FACTOR
+        boundingBox.minX = 30 * INPAINT_RESCALE_FACTOR
+        boundingBox.maxY = 245 * INPAINT_RESCALE_FACTOR
+        boundingBox.maxX = 630 * INPAINT_RESCALE_FACTOR
 
         try:
             start_time = time.time()
@@ -367,7 +373,10 @@ if __name__ == '__main__':
     # Tf gripper frame to grasp cannonical frame (y-axis = grasp axis, x-axis = palm axis)
     # On Baxter this is just the identity
     rospy.loginfo('Loading T_gripper_grasp')
-    T_gripper_grasp = RigidTransform(from_frame='gripper', to_frame='grasp')
+    rotation = RigidTransform.y_axis_rotation(float(np.pi/2))
+    T_gripper_grasp = RigidTransform(rotation, from_frame='gripper', to_frame='grasp')
+
+    broadcaster = tf.TransformBroadcaster()
 
     # TODO: write a script to calibrate this automatically
     rospy.loginfo('Loading T_camera_world')
