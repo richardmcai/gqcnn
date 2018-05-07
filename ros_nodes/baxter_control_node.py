@@ -42,7 +42,7 @@ import moveit_commander
 from autolab_core import RigidTransform, YamlConfig
 import perception as perception
 from perception import RgbdDetectorFactory
-# from gqcnn import Visualizer as vis
+from gqcnn import Visualizer as vis
 
 from gqcnn.msg import GQCNNGrasp, BoundingBox
 from sensor_msgs.msg import Image, CameraInfo
@@ -77,24 +77,24 @@ GRASP_APPROACH_DIST = 0.1
 GRIPPER_CLOSE_FORCE = 30.0 # percentage [0.0, 100.0]
 
 # Velocity params; fractions [0.0,1.0]
-APPROACH_VELOCITY = 0.5
-STANDARD_VELOCITY = 1.0
+MAX_GRASPING_VELOCITY = 0.5
+MAX_APPROACH_VELOCITY = 1.0
 
 ########
 
-def go_to_pose(arm, pose, v_scale=1.0):
+def go_to_pose(arm, pose, max_velocity=1.0):
     """Uses Moveit to go to the pose specified
     Parameters
     ----------
     pose : :obj:`geometry_msgs.msg.Pose` or RigidTransform
         The pose to move to
-    v_scale : fraction of max possible velocity
+    max_velocity : fraction of max possible velocity
     """
     if isinstance(pose, RigidTransform):
         pose = pose.pose_msg
     arm.set_start_state_to_current_state()
     arm.set_pose_target(pose)
-    arm.set_max_velocity_scaling_factor(v_scale)
+    arm.set_max_velocity_scaling_factor(max_velocity)
     arm.plan()
     arm.go()
 
@@ -123,7 +123,7 @@ def init_robot():
 
             initialized = True
         except rospy.ServiceException as e:
-            print e
+            rospy.logerr(e)
     return robot, scene, left_arm, right_arm, left_gripper, right_gripper
 
 def process_GQCNNGrasp(grasp_msg):
@@ -158,20 +158,20 @@ def execute_grasp(T_gripper_world):
 
     # perform grasp on the robot, up until the point of lifting
     rospy.loginfo('Approaching')
-    go_to_pose(left_arm, T_approach_world, v_scale=STANDARD_VELOCITY)
+    go_to_pose(left_arm, T_approach_world, max_velocity=MAX_APPROACH_VELOCITY)
 
     # grasp
     rospy.loginfo('Grasping')
-    go_to_pose(left_arm, T_gripper_world, v_scale=APPROACH_VELOCITY)
+    go_to_pose(left_arm, T_gripper_world, max_velocity=MAX_GRASPING_VELOCITY)
     left_gripper.close()
     
     #lift object
     rospy.loginfo('Lifting')
-    go_to_pose(left_arm, T_approach_world, v_scale=STANDARD_VELOCITY)
+    go_to_pose(left_arm, T_approach_world, max_velocity=MAX_GRASPING_VELOCITY)
     
     # Drop in bin
     rospy.loginfo('Going Home')
-    go_to_pose(left_arm, L_PREGRASP_POSE, v_scale=STANDARD_VELOCITY)
+    go_to_pose(left_arm, L_PREGRASP_POSE, max_velocity=MAX_APPROACH_VELOCITY)
     left_gripper.open()
 
     # record gripper width
@@ -204,19 +204,20 @@ def run_experiment():
     # detection = detector.detect(inpainted_color_image, inpainted_depth_image, detector_cfg, camera_intrinsics, T_camera_world, vis_foreground=False, vis_segmentation=False
     #     )[0]
 
-    if VISUALIZE_DETECTOR_OUTPUT:
-        vis.figure()
-        vis.subplot(1,2,1)
-        vis.imshow(detection.color_thumbnail)
-        vis.subplot(1,2,2)
-        vis.imshow(detection.depth_thumbnail)
-        vis.show()
+    # if VISUALIZE_DETECTOR_OUTPUT:
+    #     vis.figure()
+    #     vis.subplot(1,2,1)
+    #     vis.imshow(detection.color_thumbnail)
+    #     vis.subplot(1,2,2)
+    #     vis.imshow(detection.depth_thumbnail)
+    #     vis.show()
 
     try:
         rospy.loginfo('Planning Grasp')
         start_time = time.time()
         planned_grasp_data = plan_grasp(inpainted_color_image.rosmsg, inpainted_depth_image.rosmsg, camera_intrinsics, boundingBox)
         grasp_plan_time = time.time() - start_time
+        rospy.loginfo('Total grasp planning time: ' + str(grasp_plan_time) + ' secs.')
 
         lift_gripper_width, T_gripper_world = process_GQCNNGrasp(planned_grasp_data)
 
