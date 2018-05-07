@@ -223,7 +223,8 @@ def run_experiment():
         if DEBUG:
             T_gripper_world.publish_to_ros()
     except rospy.ServiceException as e:
-        print e
+        rospy.logerr(e)
+        raw_input("Press ENTER when ready ...")
 
 if __name__ == '__main__':
     
@@ -270,7 +271,7 @@ if __name__ == '__main__':
         if robot is not None:
             robot.stop()
         exit(0)
-    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.CTRL_C_EVENT, handler)
 
     # run experiment
     raw_input("Press ENTER when ready ...")
