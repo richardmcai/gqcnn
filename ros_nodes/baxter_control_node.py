@@ -23,12 +23,10 @@ MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.
 
 """
 Example node for planning grasps from point clouds using the gqcnn module and
-executing the grasps with an ABB YuMi.
-Additionally depends on the dex-net, meshpy, and yumipy modules.
+executing the grasps with a Rethink Baxter.
+Additionally depends on the dex-net, meshpy, and moveit modules.
 
-This file is intended as an example, not as code that will run with standard installation.
-
-Author: Vishal Satish
+Author: Vishal Satish, Richard Cai
 """
 import rospy
 import tf
@@ -38,13 +36,10 @@ import signal
 import time
 import sys
 
-from autolab_core import RigidTransform
-from autolab_core import YamlConfig
-from baxter_interface import Limb
 from baxter_interface import Gripper
 import moveit_commander
 
-# from visualization import Visualizer2D as vis
+from autolab_core import RigidTransform, YamlConfig
 import perception as perception
 from perception import RgbdDetectorFactory
 # from gqcnn import Visualizer as vis
@@ -55,46 +50,37 @@ from gqcnn.srv import GQCNNGraspPlanner
 
 from cv_bridge import CvBridge, CvBridgeError
 
-from recieve_images import input_reader
-
 ### CONFIG ###
 CFG_PATH = '../cfg/ros_nodes/'
 
 # Experiment Flow
 ENABLE_ROBOT = True
-TEST_COLLISION = False
+DEBUG = False
 VISUALIZE_DETECTOR_OUTPUT = False
 
-# Poses; RigidTransform from tool to base
+# Poses
 L_HOME_STATE = RigidTransform.load(CFG_PATH + 'L_HOME_STATE.tf')
 R_HOME_STATE = RigidTransform.load(CFG_PATH + 'R_HOME_STATE.tf')
 L_PREGRASP_POSE = RigidTransform.load(CFG_PATH + 'L_PREGRASP_POSE.tf')
-L_KINEMATIC_AVOIDANCE_POSE = RigidTransform.load(CFG_PATH + 'L_KINEMATIC_AVOIDANCE_POSE.tf')
+
+# Planning Params
+INPAINT_RESCALE_FACTOR = 1.0
+BOUNDBOX_MIN_X = 0
+BOUNDBOX_MIN_Y = 0
+BOUNDBOX_MAX_X = 640
+BOUNDBOX_MAX_Y = 280
+CAMERA_MESH_DIM = (1,1,1)
 
 # Grasping params
 MIN_GRIPPER_DEPTH = -0.175
 GRASP_APPROACH_DIST = 0.1
-GRASP_PICKUP_MIN_WIDTH = 0.0001
 GRIPPER_CLOSE_FORCE = 30.0 # percentage [0.0, 100.0]
 
 # Velocity params; fractions [0.0,1.0]
 APPROACH_VELOCITY = 0.5
 STANDARD_VELOCITY = 1.0
-SHAKE_VELOCITY = 1.0
-
-# Visualize configs
-INPAINT_RESCALE_FACTOR = 1.0
 
 ########
-
-def close_gripper(gripper, force=30.0):
-    """closes the gripper; force is a percentage of max force"""
-    gripper.set_holding_force(force)
-    gripper.close()
-
-def open_gripper(gripper):
-    """opens the gripper"""
-    gripper.open()
 
 def go_to_pose(arm, pose, v_scale=1.0):
     """Uses Moveit to go to the pose specified
@@ -112,228 +98,172 @@ def go_to_pose(arm, pose, v_scale=1.0):
     arm.plan()
     arm.go()
 
-def get_pose(limb):
-    """Returns a RigidTransform from limb toolframe to base frame"""
-    cur_pose = limb.endpoint_pose()
-    orientation, position = cur_pose['orientation'], cur_pose['position']
-    rotation = np.asarray([orientation.w, orientation.x, orientation.y, orientation.z])
-    translation = np.asarray([position.x, position.y, position.z])    
-    T_gripper_world = RigidTransform(rotation, translation, 'gripper', 'world')
-    return T_gripper_world
-
-def process_GQCNNGrasp(grasp, robot, left_arm, right_arm, left_gripper, right_gripper, limb, home_pose, config):
-    """ Processes a ROS GQCNNGrasp message and executes the resulting grasp on the ABB Yumi """
-    grasp = grasp.grasp
-    rospy.loginfo('Processing Grasp')
-
-    rotation_quaternion = np.asarray([grasp.pose.orientation.w, grasp.pose.orientation.x, grasp.pose.orientation.y, grasp.pose.orientation.z]) 
-    translation = np.asarray([grasp.pose.position.x, grasp.pose.position.y, grasp.pose.position.z])
-    T_grasp_camera = RigidTransform(rotation_quaternion, translation, 'grasp', T_camera_world.from_frame)
-    T_gripper_world = T_camera_world * T_grasp_camera * T_gripper_grasp
-
-    autolab_q = T_gripper_world.quaternion
-    ros_q = np.array([autolab_q[1],autolab_q[2],autolab_q[3],autolab_q[0]])
-    broadcaster.sendTransform(T_gripper_world.translation, ros_q, rospy.Time(0),
-        T_gripper_world.from_frame, T_gripper_world.to_frame)
-    
-    if ENABLE_ROBOT:
-        rospy.loginfo('Executing Grasp!')
-        lifted_object, lift_gripper_width, lift_torque = execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, limb, config)
-    
-        return lift_gripper_width, T_gripper_world
-
-def execute_grasp(T_gripper_world, robot, left_arm, right_arm, left_gripper, right_gripper, limb, config):
-    """ Executes a single grasp for the hand pose T_gripper_world up to the point of lifting the object """
-    # snap gripper to valid depth
-    if T_gripper_world.translation[2] < MIN_GRIPPER_DEPTH:
-        T_gripper_world.translation[2] = MIN_GRIPPER_DEPTH
-
-    # get cur pose
-    T_cur_world = get_pose(limb)
-
-    # compute approach pose
-    t_approach_target = np.array([0,0,GRASP_APPROACH_DIST])
-    T_gripper_approach = RigidTransform(translation=t_approach_target,
-                                        from_frame='gripper',
-                                        to_frame='gripper')
-    T_approach_world = T_gripper_world * T_gripper_approach.inverse()
-
-    # perform grasp on the robot, up until the point of lifting
-    open_gripper(left_gripper)
-    rospy.loginfo('Approaching')
-    go_to_pose(left_arm, T_approach_world, v_scale=STANDARD_VELOCITY)
-
-    # grasp
-    rospy.loginfo('Grasping')
-    if TEST_COLLISION:
-        T_gripper_world.translation[2] = 0.0
-        go_to_pose(left_arm, T_gripper_world, v_scale=APPROACH_VELOCITY)
-        T_cur_gripper_world = get_pose(limb)
-        dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
-        collision = False
-        while dist_from_goal > 1e-3:
-            T_cur_gripper_world = get_pose(limb)
-            dist_from_goal = np.linalg.norm(T_cur_gripper_world.translation - T_gripper_world.translation)
-            if limb.joint_effort('left_e0') > 0.001: # TODO: identify correct joint
-                logging.info('Detected collision!!!!!!')
-                go_to_pose(left_arm, T_approach_world, v_scale=APPROACH_VELOCITY)
-                logging.info('Commanded!!!!!!')
-                collision = True
-                break
-            go_to_pose(left_arm, T_gripper_world, v_scale=APPROACH_VELOCITY)
-    else:
-        go_to_pose(left_arm, T_gripper_world, v_scale=APPROACH_VELOCITY)
-    
-    close_gripper(left_gripper, force=GRIPPER_CLOSE_FORCE)
-    pickup_gripper_width = left_gripper.position() # a percentage
-    
-    #lift object
-    rospy.loginfo('Lifting')
-    go_to_pose(left_arm, T_approach_world, v_scale=STANDARD_VELOCITY)
-    
-    rospy.loginfo('Going Home')
-    go_to_pose(left_arm, L_PREGRASP_POSE, v_scale=STANDARD_VELOCITY)
-    open_gripper(left_gripper)
-
-    # check gripper width
-    lift_torque = limb.joint_effort('left_w0') # TODO: identify correct joint
-    lift_gripper_width = left_gripper.position() # a percentage
-
-    # check drops
-    lifted_object = False
-    if np.abs(lift_gripper_width) > GRASP_PICKUP_MIN_WIDTH:
-        lifted_object = True
-
-    return lifted_object, lift_gripper_width, lift_torque
-
-def init_robot(config):
+def init_robot():
     """ Initializes the robot """
-    limb = None
     initialized = False
     while not initialized:
         try:
             moveit_commander.roscpp_initialize(sys.argv)
             robot = moveit_commander.RobotCommander()
+            scene = moveit_commander.PlanningSceneInterface()
 
             left_arm = moveit_commander.MoveGroupCommander('left_arm')
             go_to_pose(left_arm, L_HOME_STATE)
-            home_pose = L_PREGRASP_POSE
 
             right_arm = moveit_commander.MoveGroupCommander('right_arm')
             go_to_pose(right_arm, R_HOME_STATE)
 
             left_gripper = Gripper('left')
-            open_gripper(left_gripper)
+            left_gripper.set_holding_force(GRIPPER_CLOSE_FORCE)
+            left_gripper.open()
 
             right_gripper = Gripper('right')
-            open_gripper(right_gripper)
-
-            limb = Limb('left')
+            left_gripper.set_holding_force(GRIPPER_CLOSE_FORCE)
+            right_gripper.open()
 
             initialized = True
         except rospy.ServiceException as e:
             print e
-    return robot, limb, left_arm, right_arm, left_gripper, right_gripper, home_pose
+    return robot, scene, left_arm, right_arm, left_gripper, right_gripper
+
+def process_GQCNNGrasp(grasp_msg):
+    """ Processes a ROS GQCNNGrasp message and executes the resulting grasp on the ABB Yumi """
+    rospy.loginfo('Processing Grasp')
+    grasp = grasp_msg.grasp
+
+    # compute grasp in world frame
+    rotation_quaternion = np.asarray([grasp.pose.orientation.w, grasp.pose.orientation.x, grasp.pose.orientation.y, grasp.pose.orientation.z]) 
+    translation = np.asarray([grasp.pose.position.x, grasp.pose.position.y, grasp.pose.position.z])
+    T_grasp_camera = RigidTransform(rotation_quaternion, translation, 'grasp', T_camera_world.from_frame)
+    T_gripper_world = T_camera_world * T_grasp_camera * T_gripper_grasp
+
+    # execute grasp
+    lift_gripper_width = None
+    if ENABLE_ROBOT:
+        rospy.loginfo('Executing Grasp!')
+        lifted_object, lift_gripper_width = execute_grasp(T_gripper_world)
+    
+    return lift_gripper_width, T_gripper_world
+
+def execute_grasp(T_gripper_world):
+    """ Executes a single grasp for the hand pose T_gripper_world up to the point of lifting the object """
+    # snap gripper to valid depth
+    if T_gripper_world.translation[2] < MIN_GRIPPER_DEPTH:
+        T_gripper_world.translation[2] = MIN_GRIPPER_DEPTH
+
+    # compute approach pose
+    t_approach_target = np.array([0,0,GRASP_APPROACH_DIST])
+    T_gripper_approach = RigidTransform(translation=t_approach_target, from_frame='gripper', to_frame='gripper')
+    T_approach_world = T_gripper_world * T_gripper_approach.inverse()
+
+    # perform grasp on the robot, up until the point of lifting
+    rospy.loginfo('Approaching')
+    go_to_pose(left_arm, T_approach_world, v_scale=STANDARD_VELOCITY)
+
+    # grasp
+    rospy.loginfo('Grasping')
+    go_to_pose(left_arm, T_gripper_world, v_scale=APPROACH_VELOCITY)
+    left_gripper.close()
+    
+    #lift object
+    rospy.loginfo('Lifting')
+    go_to_pose(left_arm, T_approach_world, v_scale=STANDARD_VELOCITY)
+    
+    # Drop in bin
+    rospy.loginfo('Going Home')
+    go_to_pose(left_arm, L_PREGRASP_POSE, v_scale=STANDARD_VELOCITY)
+    left_gripper.open()
+
+    # record gripper width
+    lift_gripper_width = left_gripper.position() # a percentage
+
+    # check drops
+    lifted_object = lift_gripper_width > 0.0
+
+    return lifted_object, lift_gripper_width
 
 def run_experiment():
     """ Run the experiment """
+    # get the images from the sensor
+    rospy.loginfo("Waiting for images")
+    raw_color = rospy.wait_for_message("/camera/rgb/image_color", Image)
+    raw_depth = rospy.wait_for_message("/camera/depth_registered/image", Image)
 
-    if ENABLE_ROBOT:
-        rospy.loginfo('Initializing Baxter')
-        robot, limb, left_arm, right_arm, left_gripper, right_gripper, home_pose = init_robot(config)
+    ### Create wrapped Perception RGB and Depth Images by unpacking the ROS Images using CVBridge ###
+    try:
+        color_image = perception.ColorImage(cv_bridge.imgmsg_to_cv2(raw_color, "rgb8"), frame=T_camera_world.from_frame)
+        depth_image = perception.DepthImage(cv_bridge.imgmsg_to_cv2(raw_depth, desired_encoding = "passthrough"), frame=T_camera_world.from_frame)
+    except CvBridgeError as cv_bridge_exception:
+        rospy.logerr(cv_bridge_exception)
     
-    # create ROS CVBridge
-    cv_bridge = CvBridge()
-    
-    # wait for Grasp Planning Service and create Service Proxy
-    rospy.loginfo("Waiting for planner node")
-    rospy.wait_for_service('plan_gqcnn_grasp')
-    plan_grasp = rospy.ServiceProxy('plan_gqcnn_grasp', GQCNNGraspPlanner)
+    # inpaint to remove holes
+    inpainted_color_image = color_image.inpaint(rescale_factor=INPAINT_RESCALE_FACTOR)
+    inpainted_depth_image = depth_image.inpaint(rescale_factor=INPAINT_RESCALE_FACTOR)
 
-    rospy.loginfo("Loading camera intrinsics")
-    camera_intrinsics = rospy.wait_for_message('/camera/rgb/camera_info', CameraInfo)
+    # detector = RgbdDetectorFactory.detector('point_cloud_box')
+    # detection = detector.detect(inpainted_color_image, inpainted_depth_image, detector_cfg, camera_intrinsics, T_camera_world, vis_foreground=False, vis_segmentation=False
+    #     )[0]
 
-    # setup experiment logger
+    if VISUALIZE_DETECTOR_OUTPUT:
+        vis.figure()
+        vis.subplot(1,2,1)
+        vis.imshow(detection.color_thumbnail)
+        vis.subplot(1,2,2)
+        vis.imshow(detection.depth_thumbnail)
+        vis.show()
 
-    raw_input("Press ENTER when ready ...")
-    while True:
-        # get the images from the sensor
-        rospy.loginfo("Waiting for images")
-        raw_color = rospy.wait_for_message("/camera/rgb/image_color", Image)
-        raw_depth = rospy.wait_for_message("/camera/depth_registered/image", Image)
+    try:
+        rospy.loginfo('Planning Grasp')
+        start_time = time.time()
+        planned_grasp_data = plan_grasp(inpainted_color_image.rosmsg, inpainted_depth_image.rosmsg, camera_intrinsics, boundingBox)
+        grasp_plan_time = time.time() - start_time
 
-        ### Create wrapped Perception RGB and Depth Images by unpacking the ROS Images using CVBridge ###
-        try:
-            color_image = perception.ColorImage(cv_bridge.imgmsg_to_cv2(raw_color, "rgb8"), frame=T_camera_world.from_frame)
-            depth_image = perception.DepthImage(cv_bridge.imgmsg_to_cv2(raw_depth, desired_encoding = "passthrough"), frame=T_camera_world.from_frame)
-        except CvBridgeError as cv_bridge_exception:
-            rospy.logerr(cv_bridge_exception)
-        
-        # log some trial info        
+        lift_gripper_width, T_gripper_world = process_GQCNNGrasp(planned_grasp_data)
 
-        # inpaint to remove holes
-        inpainted_color_image = color_image.inpaint(rescale_factor=INPAINT_RESCALE_FACTOR)
-        inpainted_depth_image = depth_image.inpaint(rescale_factor=INPAINT_RESCALE_FACTOR)
-
-        # detector = RgbdDetectorFactory.detector('point_cloud_box')
-        # detection = detector.detect(inpainted_color_image, inpainted_depth_image, detector_cfg, camera_intrinsics, T_camera_world, vis_foreground=False, vis_segmentation=False
-        #     )[0]
-
-        if VISUALIZE_DETECTOR_OUTPUT:
-            vis.figure()
-            vis.subplot(1,2,1)
-            vis.imshow(detection.color_thumbnail)
-            vis.subplot(1,2,2)
-            vis.imshow(detection.depth_thumbnail)
-            vis.show()
-
-        boundingBox = BoundingBox()
-        # boundingBox.minY = detection.bounding_box.min_pt[0]
-        # boundingBox.minX = detection.bounding_box.min_pt[1]
-        # boundingBox.maxY = detection.bounding_box.max_pt[0]
-        # boundingBox.maxX = detection.bounding_box.max_pt[1]
-
-        boundingBox.minY = 0 * INPAINT_RESCALE_FACTOR
-        boundingBox.minX = 0 * INPAINT_RESCALE_FACTOR
-        boundingBox.maxY = 280 * INPAINT_RESCALE_FACTOR
-        boundingBox.maxX = 640 * INPAINT_RESCALE_FACTOR
-
-        try:
-            rospy.loginfo('Planning Grasp')
-            start_time = time.time()
-            planned_grasp_data = plan_grasp(inpainted_color_image.rosmsg, inpainted_depth_image.rosmsg, camera_intrinsics, boundingBox)
-            grasp_plan_time = time.time() - start_time
-
-            lift_gripper_width, T_gripper_world = process_GQCNNGrasp(planned_grasp_data, robot, left_arm, right_arm, left_gripper, right_gripper, limb, home_pose, config)
-
-            # get human label
-            
-            # log result
-        except rospy.ServiceException as e:
-            print e
+        if DEBUG:
+            T_gripper_world.publish_to_ros()
+    except rospy.ServiceException as e:
+        print e
 
 if __name__ == '__main__':
     
     # initialize the ROS node
     rospy.init_node('Baxter_Control_Node')
 
-    config = YamlConfig(CFG_PATH + 'baxter_control_node.yaml')
+    # load detector config
+    detector_cfg = YamlConfig(CFG_PATH + 'baxter_control_node.yaml')['detector']
 
     # Tf gripper frame to grasp cannonical frame (y-axis = grasp axis, x-axis = palm axis)
-    # On Baxter this is just the identity
     rospy.loginfo('Loading T_gripper_grasp')
     rotation = RigidTransform.y_axis_rotation(float(np.pi/2))
     T_gripper_grasp = RigidTransform(rotation, from_frame='gripper', to_frame='grasp')
 
-    broadcaster = tf.TransformBroadcaster()
-
-    # TODO: write a script to calibrate this automatically
+    # load camera tf and intrinsics
     rospy.loginfo('Loading T_camera_world')
     T_camera_world = RigidTransform.load(CFG_PATH + 'kinect_to_world.tf')
+    rospy.loginfo("Loading camera intrinsics")
+    camera_intrinsics = rospy.wait_for_message('/camera/rgb/camera_info', CameraInfo)
 
-    detector_cfg = config['detector']
+    # initialize robot
+    if ENABLE_ROBOT:
+        rospy.loginfo('Initializing Baxter')
+        robot, scene, left_arm, right_arm, left_gripper, right_gripper = init_robot()
 
-    robot = None
+        # Add collision meshes for moveit planner
+        scene.add_box('camera', T_camera_world.pose_msg, CAMERA_MESH_DIM)
+        t_world_table = np.array([0,0,MIN_GRIPPER_DEPTH])
+        T_table_world = RigidTransform(translation=t_world_table)
+        scene.add_plane('table', T_table_world.pose_msg)
+
+    # initalize image processing objects
+    cv_bridge = CvBridge()
+    boundingBox = BoundingBox(BOUNDBOX_MIN_X, BOUNDBOX_MIN_Y, BOUNDBOX_MAX_X, BOUNDBOX_MAX_Y)
+    
+    # wait for Grasp Planning Service and create Service Proxy
+    rospy.loginfo("Waiting for planner node")
+    rospy.wait_for_service('plan_gqcnn_grasp')
+    plan_grasp = rospy.ServiceProxy('plan_gqcnn_grasp', GQCNNGraspPlanner)
+
     # setup safe termination
     def handler(signum, frame):
         logging.info('caught CTRL+C, exiting...')        
@@ -341,8 +271,10 @@ if __name__ == '__main__':
             robot.stop()
         exit(0)
     signal.signal(signal.SIGINT, handler)
-    
-    # run experiment
-    run_experiment()
 
+    # run experiment
+    raw_input("Press ENTER when ready ...")
+    while True:
+        run_experiment()
+    
     rospy.spin()
