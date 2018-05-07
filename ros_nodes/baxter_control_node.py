@@ -126,10 +126,9 @@ def init_robot():
             rospy.logerr(e)
     return robot, scene, left_arm, right_arm, left_gripper, right_gripper
 
-def process_GQCNNGrasp(grasp_msg):
+def process_GQCNNGrasp(grasp):
     """ Processes a ROS GQCNNGrasp message and executes the resulting grasp on the ABB Yumi """
     rospy.loginfo('Processing Grasp')
-    grasp = grasp_msg.grasp
 
     # compute grasp in world frame
     rotation_quaternion = np.asarray([grasp.pose.orientation.w, grasp.pose.orientation.x, grasp.pose.orientation.y, grasp.pose.orientation.z]) 
@@ -200,26 +199,40 @@ def run_experiment():
     inpainted_color_image = color_image.inpaint(rescale_factor=INPAINT_RESCALE_FACTOR)
     inpainted_depth_image = depth_image.inpaint(rescale_factor=INPAINT_RESCALE_FACTOR)
 
-    # detector = RgbdDetectorFactory.detector('point_cloud_box')
-    # detection = detector.detect(inpainted_color_image, inpainted_depth_image, detector_cfg, camera_intrinsics, T_camera_world, vis_foreground=False, vis_segmentation=False
-    #     )[0]
+    detector = RgbdDetectorFactory.detector('point_cloud_box')
+    detections = detector.detect(inpainted_color_image, inpainted_depth_image, detector_cfg, camera_intrinsics, T_camera_world, vis_foreground=False, vis_segmentation=False)
 
-    # if VISUALIZE_DETECTOR_OUTPUT:
-    #     vis.figure()
-    #     vis.subplot(1,2,1)
-    #     vis.imshow(detection.color_thumbnail)
-    #     vis.subplot(1,2,2)
-    #     vis.imshow(detection.depth_thumbnail)
-    #     vis.show()
+    if previous_grasp is not None:
+        center_pixel = camera_intrinsics.project(previous_grasp.pose.position, camera_intrinsics.frame)
+        i, j = center_pixel.y, center_pixel.x
+        if detector:
+            for detection in detections:
+                binaryIm = detection.binary_im
+                if binaryIm[i,j]: 
+                    segmask = binaryIm
+                    break
+        else:
+            segmask = #circle/ellipse centered at pixel i, j, aligned to grasp axis
+    else:
+        segmask = inpainted_color_image.to_binary()
+
+    if VISUALIZE_DETECTOR_OUTPUT:
+        vis.figure()
+        vis.subplot(1,2,1)
+        vis.imshow(detection.color_thumbnail)
+        vis.subplot(1,2,2)
+        vis.imshow(detection.depth_thumbnail)
+        vis.show()
 
     try:
         rospy.loginfo('Planning Grasp')
         start_time = time.time()
-        planned_grasp_data = plan_grasp(inpainted_color_image.rosmsg, inpainted_depth_image.rosmsg, camera_intrinsics, boundingBox)
+        planned_grasp_data = plan_grasp(inpainted_color_image.rosmsg, inpainted_depth_image.rosmsg, segmask.rosmsg, raw_camera_info, boundingBox)
         grasp_plan_time = time.time() - start_time
         rospy.loginfo('Total grasp planning time: ' + str(grasp_plan_time) + ' secs.')
 
-        lift_gripper_width, T_gripper_world = process_GQCNNGrasp(planned_grasp_data)
+        previous_grasp = planned_grasp_data.grasp
+        lift_gripper_width, T_gripper_world = process_GQCNNGrasp(previous_grasp)
 
         if DEBUG:
             T_gripper_world.publish_to_ros()
@@ -244,7 +257,9 @@ if __name__ == '__main__':
     rospy.loginfo('Loading T_camera_world')
     T_camera_world = RigidTransform.load(CFG_PATH + 'kinect_to_world.tf')
     rospy.loginfo("Loading camera intrinsics")
-    camera_intrinsics = rospy.wait_for_message('/camera/rgb/camera_info', CameraInfo)
+    raw_camera_info = rospy.wait_for_message('/camera/rgb/camera_info', CameraInfo)
+    camera_intrinsics = perception.CameraIntrinsics(raw_camera_info.header.frame_id, raw_camera_info.K[0], raw_camera_info.K[4], raw_camera_info.K[2], raw_camera_info.K[5], raw_camera_info.K[1], raw_camera_info.height, raw_camera_info.width)
+    
 
     # initialize robot
     if ENABLE_ROBOT:
@@ -276,6 +291,7 @@ if __name__ == '__main__':
 
     # run experiment
     raw_input("Press ENTER when ready ...")
+    previous_grasp = None
     while True:
         run_experiment()
     

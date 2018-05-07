@@ -68,9 +68,10 @@ class GraspPlanner(object):
         req: :obj:`ROS ServiceRequest`
             ROS ServiceRequest for grasp planner service
         """
-        # get the raw depth and color images as ROS Image objects
+        # get the raw depth, color, and segmask images as ROS Image objects
         raw_color = req.color_image
         raw_depth = req.depth_image
+        raw_segmask = req.segmask
 
         # get the raw camera info as ROS CameraInfo object
         raw_camera_info = req.camera_info
@@ -85,6 +86,7 @@ class GraspPlanner(object):
         try:
             color_image = perception.ColorImage(self.cv_bridge.imgmsg_to_cv2(raw_color, "rgb8"), frame=camera_intrinsics.frame)
             depth_image = perception.DepthImage(self.cv_bridge.imgmsg_to_cv2(raw_depth, desired_encoding = "passthrough"), frame=camera_intrinsics.frame)
+            segmask = perception.BinaryImage(self.cv_bridge.imgmsg_to_cv2(raw_segmask, "mono8"), frame=camera_intrinsics.frame)
         except CvBridgeError as cv_bridge_exception:
             rospy.logerr(cv_bridge_exception)
 
@@ -131,9 +133,10 @@ class GraspPlanner(object):
             width = (maxX - minX)
             height = (maxY - minY)
   
-        # crop camera intrinsics and rgbd image
+        # crop camera intrinsics, rgbd image, and segmask
         cropped_camera_intrinsics = camera_intrinsics.crop(height, width, centroidY, centroidX)
         cropped_rgbd_image = rgbd_image.crop(height, width, centroidY, centroidX)
+        cropped_segmask = segmask.crop(height, width, centroidY, centroidX)
         
         # visualize  
         if self.cfg['vis']['vis_cropped_rgbd_image']:
@@ -141,7 +144,7 @@ class GraspPlanner(object):
             vis.show()
 
         # create an RGBDImageState with the cropped RGBDImage and CameraIntrinsics
-        image_state = RgbdImageState(cropped_rgbd_image, cropped_camera_intrinsics)
+        image_state = RgbdImageState(cropped_rgbd_image, cropped_camera_intrinsics, segmask=cropped_segmask)
   
         # execute policy
         try:
