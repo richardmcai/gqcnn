@@ -3,6 +3,7 @@ vis:
   vis_cropped_rgbd_image: 0
   vis_uncropped_color_image: 0
   vis_uncropped_depth_image: 0
+  vis_final_grasp: 0
 
 # padding for the cropped images so when they are rotated to be centered on the grasp point there will not be any gaps where there is no part of the image
 width_pad: 0
@@ -26,7 +27,7 @@ policy:
 
   # general params
   deterministic: 1
-  gripper_width: 0.05
+  gripper_width: 0.07
   crop_height: 96
   crop_width: 96
 

@@ -68,8 +68,6 @@ class GraspPlanner(object):
         req: :obj:`ROS ServiceRequest`
             ROS ServiceRequest for grasp planner service
         """
-        rospy.loginfo('Planning Grasp')
-        
         # get the raw depth and color images as ROS Image objects
         raw_color = req.color_image
         raw_depth = req.depth_image
@@ -191,10 +189,10 @@ class GraspPlanner(object):
         # return GQCNNGrasp msg
         rospy.loginfo('Total grasp planning time: ' + str(time.time() - grasp_planning_start_time) + ' secs.')
 
-        # if self.cfg['vis']['final_grasp']:
-        #     vis.imshow(rgbd_image_state.rgbd_im)
-        #     vis.grasp(grasp.grasp, scale=1.5, show_center=False, show_axis=True)
-        #     vis.show()
+        if self.cfg['vis']['vis_final_grasp']:
+            vis.imshow(rgbd_image_state.rgbd_im)
+            vis.grasp(grasp.grasp, scale=1.5, show_center=False, show_axis=True)
+            vis.show()
 
         return gqcnn_grasp
 
