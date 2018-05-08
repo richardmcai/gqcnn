@@ -44,6 +44,8 @@ import perception as perception
 from perception import RgbdDetectorFactory
 from gqcnn import Visualizer as vis
 
+from moveit_msgs.msg import Constraints, JointConstraint
+from geometry_msgs.msg import PoseStamped
 from gqcnn.msg import GQCNNGrasp, BoundingBox
 from sensor_msgs.msg import Image, CameraInfo
 from gqcnn.srv import GQCNNGraspPlanner
@@ -65,19 +67,19 @@ L_PREGRASP_POSE = RigidTransform.load(CFG_PATH + 'L_PREGRASP_POSE.tf')
 
 # Planning Params
 INPAINT_RESCALE_FACTOR = 1.0
-BOUNDBOX_MIN_X = 0
+BOUNDBOX_MIN_X = 70
 BOUNDBOX_MIN_Y = 0
-BOUNDBOX_MAX_X = 640
-BOUNDBOX_MAX_Y = 280
-CAMERA_MESH_DIM = (1,1,1)
+BOUNDBOX_MAX_X = 525
+BOUNDBOX_MAX_Y = 260
+CAMERA_MESH_DIM = (0.3,0.05,0.1)
 
 # Grasping params
-MIN_GRIPPER_DEPTH = -0.175
+MIN_GRIPPER_DEPTH = -0.170
 GRASP_APPROACH_DIST = 0.1
 GRIPPER_CLOSE_FORCE = 30.0 # percentage [0.0, 100.0]
 
 # Velocity params; fractions [0.0,1.0]
-MAX_GRASPING_VELOCITY = 0.5
+MAX_GRASPING_VELOCITY = 0.2
 MAX_APPROACH_VELOCITY = 1.0
 
 ########
@@ -109,6 +111,13 @@ def init_robot():
 
             left_arm = moveit_commander.MoveGroupCommander('left_arm')
             go_to_pose(left_arm, L_HOME_STATE)
+            left_e0_constraints = JointConstraint(joint_name='left_e0',
+                position=-np.pi/2, tolerance_above=np.pi/2, tolerance_below=np.pi/2)
+            left_w1_constraints = JointConstraint(joint_name='left_w1',
+                position=np.pi/2, tolerance_above=np.pi/2, tolerance_below=np.pi/2)
+            left_constraints = Constraints()
+            left_constraints.joint_constraints = [left_e0_constraints, left_w1_constraints]
+            # left_arm.set_path_constraints(left_constraints)
 
             right_arm = moveit_commander.MoveGroupCommander('right_arm')
             go_to_pose(right_arm, R_HOME_STATE)
@@ -252,10 +261,20 @@ if __name__ == '__main__':
         robot, scene, left_arm, right_arm, left_gripper, right_gripper = init_robot()
 
         # Add collision meshes for moveit planner
-        scene.add_box('camera', T_camera_world.pose_msg, CAMERA_MESH_DIM)
-        t_world_table = np.array([0,0,MIN_GRIPPER_DEPTH])
-        T_table_world = RigidTransform(translation=t_world_table)
-        scene.add_plane('table', T_table_world.pose_msg)
+        camera_pose = PoseStamped()
+        camera_pose.header.frame_id = 'world'
+        camera_pose.header.stamp = rospy.Time(0)
+        camera_pose.pose = T_camera_world.pose_msg
+        # scene.add_box('camera', camera_pose, CAMERA_MESH_DIM)
+
+        table_pose = PoseStamped()
+        table_pose.header.frame_id = 'world'
+        table_pose.header.stamp = rospy.Time(0)
+        table_pose.pose.position.z = MIN_GRIPPER_DEPTH - 0.02
+        table_pose.pose.position.x = 0.0
+        table_pose.pose.position.y = 0.0
+        table_pose.pose.orientation.w = 1.0
+        # scene.add_plane('table', table_pose)
 
     # initalize image processing objects
     cv_bridge = CvBridge()
@@ -269,10 +288,13 @@ if __name__ == '__main__':
     # setup safe termination
     def handler(signum, frame):
         logging.info('caught CTRL+C, exiting...')        
-        if robot is not None:
-            robot.stop()
+        if left_arm is not None:
+            left_arm.stop()
+        if right_arm is not None:
+            right_arm.stop()
+        rospy.loginfo('caught CTRL+C, Aborted!')
         exit(0)
-    signal.signal(signal.CTRL_C_EVENT, handler)
+    signal.signal(signal.SIGINT, handler)
 
     # run experiment
     raw_input("Press ENTER when ready ...")
