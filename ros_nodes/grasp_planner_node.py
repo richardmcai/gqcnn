@@ -142,6 +142,9 @@ class GraspPlanner(object):
         if self.cfg['vis']['vis_cropped_rgbd_image']:
             vis.imshow(cropped_rgbd_image)
             vis.show()
+        if self.cfg['vis']['vis_cropped_segmask']:
+            vis.imshow(cropped_segmask)
+            vis.show()
 
         # create an RGBDImageState with the cropped RGBDImage and CameraIntrinsics
         image_state = RgbdImageState(cropped_rgbd_image, cropped_camera_intrinsics, segmask=cropped_segmask)

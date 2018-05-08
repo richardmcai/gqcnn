@@ -54,6 +54,7 @@ catkin_python_setup()
  add_service_files(
   FILES
   GQCNNGraspPlanner.srv
+  GQCNNGraspExecuter.srv
  )
 
 ## Generate actions in the 'action' folder

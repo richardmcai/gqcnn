@@ -1,0 +1,5 @@
+# request params
+GQCNNGrasp grasp
+---
+# response params
+bool queued
